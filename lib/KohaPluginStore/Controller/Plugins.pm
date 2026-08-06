@@ -7,7 +7,7 @@ use JSON;
 sub index {
     my $c = shift;
 
-    my @plugins = KohaPluginStore::Model::Plugin->new()->search;
+    my @plugins = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->search;
     $c->stash( plugins => \@plugins );
     $c->render;
 }
@@ -15,7 +15,7 @@ sub index {
 sub my_plugins {
     my $c = shift;
 
-    my @plugins = KohaPluginStore::Model::Plugin->new()->search( { user_id => $c->session->{user}->{id} } );
+    my @plugins = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->search( { user_id => $c->session->{user}->{id} } );
     $c->stash( my_plugins => \@plugins );
 
     my $template = $c->session->{user} ? 'my-plugins' : 'unauthorized';
@@ -33,7 +33,7 @@ sub edit_form {
     my $c = shift;
 
     my $plugin_id = $c->param('id');
-    my $plugin    = KohaPluginStore::Model::Plugin->new()->find(
+    my $plugin    = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find(
         {
             id => $plugin_id,
         }
@@ -102,11 +102,11 @@ sub list_all ($c) {
 
     return $c->render( text => 'koha_version_release required', status => 400 ) unless $koha_version_release;
 
-    my @plugins = map { $_->unblessed } KohaPluginStore::Model::Plugin->new()->search;
+    my @plugins = map { $_->unblessed } KohaPluginStore::Model::Plugin->new( pg => $c->pg )->search;
 
     foreach my $plugin (@plugins) {
         my @releases =
-            map { $_->unblessed } KohaPluginStore::Model::PluginVersion->new()->search(
+            map { $_->unblessed } KohaPluginStore::Model::PluginVersion->new( pg => $c->pg )->search(
                 { plugin_id => $plugin->{id} }, { order_by => { -desc => 'date_released' } }
             );
 
@@ -162,7 +162,7 @@ sub new_plugin ($c) {
     return $c->_exit_with_error_message('Plugin metadata missing \'minimum_version\'. Make sure this value is set.')
         unless $plugin_metadata->{minimum_version};
 
-    my $existing_plugin = KohaPluginStore::Model::Plugin->new()->find(
+    my $existing_plugin = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find(
         {
             name     => $plugin_metadata->{name},
             repo_url => $plugin_repo
@@ -203,7 +203,7 @@ sub new_plugin_confirm ($c) {
         return $c->render( text => 'Unauthorized', status => 401 );
     }
 
-    my $new_plugin = KohaPluginStore::Model::Plugin->new()->create(
+    my $new_plugin = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->create(
         {
             name        => $name,
             description => $description,
@@ -214,7 +214,7 @@ sub new_plugin_confirm ($c) {
         }
     );
 
-    my $new_release = KohaPluginStore::Model::PluginVersion->new()->create(
+    my $new_release = KohaPluginStore::Model::PluginVersion->new( pg => $c->pg )->create(
         {
             plugin_id        => $new_plugin->id,
             name             => $release_name,
