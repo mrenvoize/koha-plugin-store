@@ -29,6 +29,21 @@ Koha plugin store project consisting of 2 distinct components:
   - Reset test data: `perl lib/KohaPluginStore/Command/reset_test_data.pl`
   - Generate schema class files: `perl lib/KohaPluginStore/Command/make_dbic_schema_files.pl`
 
+### Docker development
+
+No local Perl install needed:
+
+1. `docker compose up -d --build`
+2. `docker compose exec app perl lib/KohaPluginStore/Command/create_db_schema.pl` (first run only)
+3. `docker compose exec app perl lib/KohaPluginStore/Command/reset_test_data.pl` (optional demo data)
+4. Visit http://127.0.0.1:3000
+
+Edits to the repo on your host are picked up automatically (`morbo` hot-reloads inside the
+container) — no rebuild needed unless you change `cpanfile` or the `Dockerfile` itself.
+
+A `koha_plugin_store.conf` (see `koha_plugin_store.conf.example`) is only needed for the
+GitHub-backed plugin submission flow, not for browsing the site.
+
 ## Client
 
 - VueJS App
