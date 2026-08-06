@@ -4,11 +4,12 @@ use Test::More;
 use Test::Mojo;
 
 use lib 't/lib';
-use TestDB qw(reset_db);
+use TestDB qw(reset_db test_pg);
 
 reset_db();
 
 my $t = Test::Mojo->new('KohaPluginStore');
+$t->app->pg( test_pg() );
 
 subtest 'register then login' => sub {
     $t->post_ok(

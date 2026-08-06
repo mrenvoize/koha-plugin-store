@@ -13,7 +13,7 @@ sub new_release ($c) {
     my $release_koha_min_version = $c->param('release_metadata_koha_min_version');
     my $release_kpz_url          = $c->param('kpz_download');
 
-    my $new_release = KohaPluginStore::Model::PluginVersion->new()->create(
+    my $new_release = KohaPluginStore::Model::PluginVersion->new( pg => $c->pg )->create(
         {
             plugin_id        => $plugin_id,
             name             => $release_name,

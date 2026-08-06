@@ -4,7 +4,7 @@ use Test::More;
 use Test::Mojo;
 
 use lib 't/lib';
-use TestDB qw(reset_db);
+use TestDB qw(reset_db test_pg);
 
 use KohaPluginStore::Model::User;
 use KohaPluginStore::Model::Plugin;
@@ -12,13 +12,13 @@ use KohaPluginStore::Model::PluginVersion;
 
 reset_db();
 
-my $user = KohaPluginStore::Model::User->new->create(
+my $user = KohaPluginStore::Model::User->new( pg => test_pg() )->create(
     { username => 'seeder', password => 'seederpass', email => 'seeder@example.com' }
 );
-my $plugin = KohaPluginStore::Model::Plugin->new->create(
+my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create(
     { name => 'CoverFlow', description => 'A widget', user_id => $user->id }
 );
-KohaPluginStore::Model::PluginVersion->new->create(
+KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
     {
         plugin_id        => $plugin->id,
         version          => '2.5.7',
@@ -28,6 +28,7 @@ KohaPluginStore::Model::PluginVersion->new->create(
 );
 
 my $t = Test::Mojo->new('KohaPluginStore');
+$t->app->pg( test_pg() );
 
 subtest 'requires koha_version_release' => sub {
     $t->get_ok('/api/plugins')->status_is(400);

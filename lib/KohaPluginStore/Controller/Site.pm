@@ -1,12 +1,13 @@
 package KohaPluginStore::Controller::Site;
 use Mojo::Base 'Mojolicious::Controller', -signatures;
 use KohaPluginStore::Model::User;
+use KohaPluginStore::Model::Plugin;
 
 sub index {
     my $c = shift;
 
-    my @users = KohaPluginStore::Model::User->new()->search;
-    my @plugins = KohaPluginStore::Model::Plugin->new()->search;
+    my @users = KohaPluginStore::Model::User->new( pg => $c->pg )->search;
+    my @plugins = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->search;
     $c->stash( plugins => \@plugins );
     $c->stash( users   => \@users );
     $c->render;
@@ -17,13 +18,10 @@ sub login {
     my $username = $c->param('username');
     my $password = $c->param('password');
 
-    if (
-        KohaPluginStore::Model::User::check_password(
-            $username, $password
-        )
-      )
-    {
-        $c->_log_in_user($username);
+    my $user = KohaPluginStore::Model::User->new( pg => $c->pg )->find( { username => $username } );
+
+    if ( $user && $user->check_password($password) ) {
+        $c->_log_in_user($user);
         $c->redirect_to('/my-plugins');
     }
     $c->stash( invalid_login => 1 );
@@ -39,9 +37,10 @@ sub register {
         email    => $c->param('email'),
     };
     warn Mojo::Util::dumper $user;
+    my $created_user;
     unless (
         eval {
-            KohaPluginStore::Model::User->new()->create($user);
+            $created_user = KohaPluginStore::Model::User->new( pg => $c->pg )->create($user);
             1;
         }
       )
@@ -49,7 +48,7 @@ sub register {
         $c->app->log->error($@) if $@;
         return $c->render( text => 'Could not create user', status => 400 );
     }
-    $c->_log_in_user($username);
+    $c->_log_in_user($created_user);
     $c->redirect_to('/');
 }
 
@@ -60,10 +59,7 @@ sub logout {
 }
 
 sub _log_in_user {
-    my $c = shift;
-    my $username = shift;
-    my $user = KohaPluginStore::Model::User->new->find(
-        { username => $username } );
+    my ( $c, $user ) = @_;
     $c->session->{user} = $user->unblessed;
 }
 1;

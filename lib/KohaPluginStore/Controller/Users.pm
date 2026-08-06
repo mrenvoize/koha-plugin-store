@@ -6,7 +6,7 @@ use KohaPluginStore::Model::User;
 sub index {
     my $c = shift;
 
-    my @users = KohaPluginStore::Model::User->new()->search();
+    my @users = KohaPluginStore::Model::User->new( pg => $c->pg )->search();
 
     $c->stash( users => \@users );
     $c->render;
