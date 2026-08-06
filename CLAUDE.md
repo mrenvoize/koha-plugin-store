@@ -55,9 +55,12 @@ follow standard Mojolicious controller conventions.
 
 ### Data layer — a thin Mojo::Pg CRUD wrapper
 
-- `KohaPluginStore::Model::DB` holds a single `Mojo::Pg` connection singleton, initialised
-  once at app startup from `koha_plugin_store.conf`'s `pg_dsn`.
-- `KohaPluginStore::Model::Base` — base class for `Model::{Plugin,PluginVersion,User}`.
+- `KohaPluginStore` (the app class) holds a lazy `pg` attribute (`has pg => sub {...}`)
+  that builds a `Mojo::Pg` connection from `koha_plugin_store.conf`'s `pg_dsn` on first
+  access — no class-level singleton. Controllers reach it via the `$c->pg` helper;
+  commands via `$self->app->pg`.
+- `KohaPluginStore::Model::Base` — base class for `Model::{Plugin,PluginVersion,User}`,
+  taking `pg` and `data` as constructor-injected attributes (`has 'pg'`, `has 'data'`).
   Each subclass declares `_table` (the Postgres table name) and `_columns` (used for
   `INSERT ... RETURNING`). `create`/`find`/`search` are built on `Mojo::Pg::Database`'s
   `insert`/`select` query builder. Column accessors (`->id`, `->name`, etc.) are still
