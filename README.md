@@ -20,29 +20,34 @@ Koha plugin store project consisting of 2 distinct components:
 - Notes
 
   - A `koha_plugin_store.conf` file is required. Follow the example from `koha_plugin_store.conf.example`
+    (now also holds `pg_dsn`, the Postgres connection string).
   - The `kpz_packages` directory is used to store `.kpz` files download from github.
   - To install cpan dependencies, run `cpanm --installdeps .` at the project
     root dir.
+  - Local Postgres runs via `docker compose up -d postgres` (see `docker-compose.yml`).
 
 - Commands
-  - Create database schema: run `perl lib/KohaPluginStore/Command/create_db_schema.pl`
+  - Start local Postgres: `docker compose up -d postgres`
+  - Apply migrations: `perl lib/KohaPluginStore/Command/migrate.pl`
   - Reset test data: `perl lib/KohaPluginStore/Command/reset_test_data.pl`
-  - Generate schema class files: `perl lib/KohaPluginStore/Command/make_dbic_schema_files.pl`
 
 ### Docker development
 
-No local Perl install needed:
+No local Perl or Postgres install needed:
 
-1. `docker compose up -d --build`
-2. `docker compose exec app perl lib/KohaPluginStore/Command/create_db_schema.pl` (first run only)
-3. `docker compose exec app perl lib/KohaPluginStore/Command/reset_test_data.pl` (optional demo data)
-4. Visit http://127.0.0.1:3000
+1. `cp koha_plugin_store.conf.docker.example koha_plugin_store.conf` (edit in your
+   `github_user_access_token` if you need GitHub-backed features)
+2. `docker compose up -d --build`
+3. `docker compose exec app perl lib/KohaPluginStore/Command/migrate.pl` (first run only)
+4. `docker compose exec app perl lib/KohaPluginStore/Command/reset_test_data.pl` (optional demo data)
+5. Visit http://127.0.0.1:3000
 
 Edits to the repo on your host are picked up automatically (`morbo` hot-reloads inside the
 container) — no rebuild needed unless you change `cpanfile` or the `Dockerfile` itself.
 
-A `koha_plugin_store.conf` (see `koha_plugin_store.conf.example`) is only needed for the
-GitHub-backed plugin submission flow, not for browsing the site.
+This is separate from `koha_plugin_store.conf.example`, used for running directly on the
+host — the two files point at Postgres differently (`postgres` as the hostname inside
+Docker's network vs. `127.0.0.1:55432` on the host).
 
 ## Client
 
