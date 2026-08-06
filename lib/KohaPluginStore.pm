@@ -1,10 +1,8 @@
 package KohaPluginStore;
 use Mojo::Base 'Mojolicious', -signatures;
-use Mojo::SQLite;
 
 use KohaPluginStore::Model::User;
 use KohaPluginStore::Model::Plugin;
-use KohaPluginStore::Schema;
 use KohaPluginStore::Model::DB;
 
 has site_name => sub {
@@ -14,7 +12,8 @@ has site_name => sub {
 
 sub startup ($self) {
 
-    $self->{_dbh} = KohaPluginStore::Model::DB->new();
+    $self->plugin('Config');
+    KohaPluginStore::Model::DB->pg( $self->config );
 
     $self->helper(
         logged_in_user => sub {

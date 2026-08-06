@@ -1,6 +1,7 @@
 package KohaPluginStore::Controller::Plugins;
 use Mojo::Base 'Mojolicious::Controller', -signatures;
 use KohaPluginStore::Model::Plugin;
+use KohaPluginStore::Model::PluginVersion;
 use JSON;
 
 sub index {
@@ -105,7 +106,7 @@ sub list_all ($c) {
 
     foreach my $plugin (@plugins) {
         my @releases =
-            map { $_->unblessed } KohaPluginStore::Model::Release->new()->search(
+            map { $_->unblessed } KohaPluginStore::Model::PluginVersion->new()->search(
                 { plugin_id => $plugin->{id} }, { order_by => { -desc => 'date_released' } }
             );
 
@@ -213,7 +214,7 @@ sub new_plugin_confirm ($c) {
         }
     );
 
-    my $new_release = KohaPluginStore::Model::Release->new()->create(
+    my $new_release = KohaPluginStore::Model::PluginVersion->new()->create(
         {
             plugin_id        => $new_plugin->id,
             name             => $release_name,
