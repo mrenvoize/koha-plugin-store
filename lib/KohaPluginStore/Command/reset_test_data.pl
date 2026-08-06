@@ -1,210 +1,126 @@
+#!/usr/bin/env perl
 use Modern::Perl;
-use DBI;
+use Mojo::File qw(curfile);
 
-my $dbh = DBI->connect( "dbi:SQLite:dbname=database.db", "", "" );
+use lib curfile->dirname->dirname->dirname->to_string;
 
-$dbh->do(q{DELETE FROM plugins});
-$dbh->do(q{DELETE FROM sqlite_sequence WHERE name = 'plugins'});
-$dbh->do(q{DELETE FROM users});
-$dbh->do(q{DELETE FROM sqlite_sequence WHERE name = 'users'});
-$dbh->do(q{DELETE FROM releases});
-$dbh->do(q{DELETE FROM sqlite_sequence WHERE name = 'releases'});
+use KohaPluginStore::Model::DB;
+use KohaPluginStore::Model::User;
+use KohaPluginStore::Model::Plugin;
+use KohaPluginStore::Model::PluginVersion;
+
+my $config_file = curfile->dirname->dirname->dirname->dirname->child('koha_plugin_store.conf');
+my $config = do "$config_file" or die "Could not load $config_file: $@$!";
+
+KohaPluginStore::Model::DB->pg($config);
+KohaPluginStore::Model::DB->pg->db->query(
+    'TRUNCATE plugin_versions, plugins, users RESTART IDENTITY CASCADE'
+);
 
 # Users data:
 # admin: admin
 # John: Doe
-
-$dbh->do(
-q{INSERT OR IGNORE INTO users( username, password, email ) values( 'admin', '$2y$14$suGo48Hu5oujkBqBqzVueeZHjjkNsY1/SZCBtIMFkoDbX.2Vq92yy', 'admin@www.com' ) }
+my $admin = KohaPluginStore::Model::User->new->create(
+    { username => 'admin', password => 'admin', email => 'admin@www.com' }
+);
+KohaPluginStore::Model::User->new->create(
+    { username => 'John', password => 'Doe', email => 'john@doe.com' }
 );
 
-$dbh->do(
-q{INSERT OR IGNORE INTO users( username, password, email ) values( 'John', '$2y$14$0s3kXSp4hBVi5ueaRr1sJez2XGgvV/OETt653a28GHWHCskqV5rRa', 'john@doe.com' ) }
+my $coverflow = KohaPluginStore::Model::Plugin->new->create(
+    {
+        author      => 'Kyle M Hall',
+        class_name  => 'Koha::Plugin::Com::ByWaterSolutions::CoverFlow',
+        description => 'Convert a report into a coverflow style widget!',
+        name        => 'CoverFlow plugin',
+        repo_url    => 'https://github.com/bywatersolutions/koha-plugin-coverflow',
+        thumbnail   => 'coverflow.png',
+        timestamp   => '2024-09-17 09:34:22',
+        user_id     => $admin->id,
+    }
+);
+KohaPluginStore::Model::PluginVersion->new->create(
+    {
+        plugin_id        => $coverflow->id,
+        name             => 'v2.5.7',
+        tag_name         => 'v2.5.7',
+        version          => '2.5.7',
+        koha_min_version => '19.05',
+        kpz_url          => 'https://github.com/bywatersolutions/koha-plugin-coverflow/releases/download/v2.5.7/koha-plugin-coverflow-2.5.7.kpz',
+        date_released    => '2024-07-01T15:34:06Z',
+    }
 );
 
-# Plugins data
-$dbh->do(
-q{INSERT OR IGNORE INTO plugins (
-    author,
-    class_name,
-    description,
-    name,
-    repo_url,
-    thumbnail,
-    timestamp,
-    user_id
-) values (
-    'Kyle M Hall',
-    'Koha::Plugin::Com::ByWaterSolutions::CoverFlow',
-    'Convert a report into a coverflow style widget!',
-    'CoverFlow plugin',
-    'https://github.com/bywatersolutions/koha-plugin-coverflow',
-    'coverflow.png',
-    '2024-09-17 09:34:22',
-    1
-)});
-
-$dbh->do(
-q{INSERT OR IGNORE INTO plugins (
-    author,
-    class_name,
-    description,
-    name,
-    repo_url,
-    thumbnail,
-    timestamp,
-    user_id
-) values (
-    'PTFS-Europe',
-    'Koha::Plugin::Com::PTFSEurope::IllActions',
-    'ILL Actions',
-    'IllActions',
-    'https://github.com/PTFS-Europe/koha-plugin-ill-actions',
-    'ill_actions.png',
-    '2024-09-17 09:53:10',
-    1
-)});
-
-$dbh->do(
-q{INSERT OR IGNORE INTO plugins (
-    author,
-    class_name,
-    description,
-    name,
-    repo_url,
-    thumbnail,
-    timestamp,
-    user_id
-) values (
-    'Mehdi Hamidi, Bouzid Fergani, Arthur Bousquet, The Minh Luong, Matthias Le Gac',
-    'Koha::Plugin::PDFtoCover',
-    'Creates cover images for documents missing one',
-    'PDFtoCover',
-    'https://github.com/inLibro/koha-plugin-pdftocover',
-    'pdftocover.png',
-    '2024-09-17 10:12:51',
-    1
-)});
-
-$dbh->do(
-q{INSERT OR IGNORE INTO plugins (
-    author,
-    class_name,
-    description,
-    name,
-    repo_url,
-    thumbnail,
-    timestamp,
-    user_id
-) values (
-    'LMSCloud GmbH',
-    'Koha::Plugin::Com::LMSCloud::EventManagement',
-    'This plugin makes managing events with koha a breeze!',
-    'LMSEventManagement',
-    'https://github.com/LMSCloud/LMSEventManagement',
-    'lmscloudevent.png',
-    '2024-09-17 11:29:28',
-    1
-)});
-
-# Releases data
-
-$dbh->do(
-q{INSERT OR IGNORE INTO releases (
-    date_released,
-    koha_min_version,
-    kpz_url,
-    name,
-    plugin_id,
-    tag_name,
-    version
-) values (
-    '2024-07-01T15:34:06Z',
-    '19.05',
-    'https://github.com/bywatersolutions/koha-plugin-coverflow/releases/download/v2.5.7/koha-plugin-coverflow-2.5.7.kpz',
-    'v2.5.7',
-    1,
-    'v2.5.7',
-    '2.5.7'
-)}
+my $ill_actions = KohaPluginStore::Model::Plugin->new->create(
+    {
+        author      => 'PTFS-Europe',
+        class_name  => 'Koha::Plugin::Com::PTFSEurope::IllActions',
+        description => 'ILL Actions',
+        name        => 'IllActions',
+        repo_url    => 'https://github.com/PTFS-Europe/koha-plugin-ill-actions',
+        thumbnail   => 'ill_actions.png',
+        timestamp   => '2024-09-17 09:53:10',
+        user_id     => $admin->id,
+    }
+);
+KohaPluginStore::Model::PluginVersion->new->create(
+    {
+        plugin_id        => $ill_actions->id,
+        name             => 'v1.3.1',
+        tag_name         => '1.3.1',
+        version          => '1.3.1',
+        koha_min_version => '23.11.00.000',
+        kpz_url          => 'https://github.com/PTFS-Europe/koha-plugin-ill-actions/releases/download/1.3.1/koha-ill-actions-plugin-1.3.1.kpz',
+        date_released    => '2024-03-27T15:56:15Z',
+    }
 );
 
-# $dbh->do(
-# q{INSERT OR IGNORE INTO releases (
-#     date_released,
-#     koha_min_version,
-#     kpz_url,
-#     name,
-#     plugin_id,
-#     tag_name,
-#     version
-# ) values (
-#     '2024-07-31T15:18:53Z',
-#     '19.05',
-#     'https://github.com/bywatersolutions/koha-plugin-coverflow/releases/download/v2.5.8/koha-plugin-coverflow-2.5.8.kpz',
-#     'v2.5.8',
-#     1,
-#     'v2.5.8',
-#     '2.5.8'
-# )}
-# );
-
-$dbh->do(
-q{INSERT OR IGNORE INTO releases (
-    date_released,
-    koha_min_version,
-    kpz_url,
-    name,
-    plugin_id,
-    tag_name,
-    version
-) values (
-    '2024-03-27T15:56:15Z',
-    '23.11.00.000',
-    'https://github.com/PTFS-Europe/koha-plugin-ill-actions/releases/download/1.3.1/koha-ill-actions-plugin-1.3.1.kpz',
-    'v1.3.1',
-    2,
-    '1.3.1',
-    '1.3.1'
-)}
+my $pdf_to_cover = KohaPluginStore::Model::Plugin->new->create(
+    {
+        author      => 'Mehdi Hamidi, Bouzid Fergani, Arthur Bousquet, The Minh Luong, Matthias Le Gac',
+        class_name  => 'Koha::Plugin::PDFtoCover',
+        description => 'Creates cover images for documents missing one',
+        name        => 'PDFtoCover',
+        repo_url    => 'https://github.com/inLibro/koha-plugin-pdftocover',
+        thumbnail   => 'pdftocover.png',
+        timestamp   => '2024-09-17 10:12:51',
+        user_id     => $admin->id,
+    }
+);
+KohaPluginStore::Model::PluginVersion->new->create(
+    {
+        plugin_id        => $pdf_to_cover->id,
+        name             => 'v2.1',
+        tag_name         => 'v2.1',
+        version          => '2.1',
+        koha_min_version => '23.05.08',
+        kpz_url          => 'https://github.com/inLibro/koha-plugin-pdftocover/releases/download/v2.1/koha-plugin-pdftocover-2.1.kpz',
+        date_released    => '2024-07-30T19:18:58Z',
+    }
 );
 
-$dbh->do(
-q{INSERT OR IGNORE INTO releases (
-    date_released,
-    koha_min_version,
-    kpz_url,
-    name,
-    plugin_id,
-    tag_name,
-    version
-) values (
-    '2024-07-30T19:18:58Z',
-    '23.05.08',
-    'https://github.com/inLibro/koha-plugin-pdftocover/releases/download/v2.1/koha-plugin-pdftocover-2.1.kpz',
-    'v2.1',
-    3,
-    'v2.1',
-    '2.1'
-)}
+my $lms_event_management = KohaPluginStore::Model::Plugin->new->create(
+    {
+        author      => 'LMSCloud GmbH',
+        class_name  => 'Koha::Plugin::Com::LMSCloud::EventManagement',
+        description => 'This plugin makes managing events with koha a breeze!',
+        name        => 'LMSEventManagement',
+        repo_url    => 'https://github.com/LMSCloud/LMSEventManagement',
+        thumbnail   => 'lmscloudevent.png',
+        timestamp   => '2024-09-17 11:29:28',
+        user_id     => $admin->id,
+    }
+);
+KohaPluginStore::Model::PluginVersion->new->create(
+    {
+        plugin_id        => $lms_event_management->id,
+        name             => 'Carnival',
+        tag_name         => 'v1.6.12-beta.14',
+        version          => '1.6.12',
+        koha_min_version => '18.05',
+        kpz_url          => 'https://github.com/LMSCloud/LMSEventManagement/releases/download/v1.6.12-beta.14/lms-event-management-v1.6.12.kpz',
+        date_released    => '2024-03-04T12:32:26Z',
+    }
 );
 
-$dbh->do(
-q{INSERT OR IGNORE INTO releases (
-    date_released,
-    koha_min_version,
-    kpz_url,
-    name,
-    plugin_id,
-    tag_name,
-    version
-) values (
-    '2024-03-04T12:32:26Z',
-    '18.05',
-    'https://github.com/LMSCloud/LMSEventManagement/releases/download/v1.6.12-beta.14/lms-event-management-v1.6.12.kpz',
-    'Carnival',
-    4,
-    'v1.6.12-beta.14',
-    '1.6.12'
-)}
-);
+say 'Test data reset.';
