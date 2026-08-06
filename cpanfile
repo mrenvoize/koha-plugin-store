@@ -1,8 +1,6 @@
 requires 'Modern::Perl';
 requires 'Mojolicious';
-requires 'Mojo::SQLite';
-requires 'Data::Structure::Util';
-requires 'DBIx::Class::Schema';
+requires 'Mojo::Pg';
 requires 'JSON';
 requires 'Passwords';
 requires 'Archive::Zip';
