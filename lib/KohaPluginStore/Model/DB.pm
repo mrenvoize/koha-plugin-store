@@ -1,43 +1,22 @@
 package KohaPluginStore::Model::DB;
 
-use KohaPluginStore::Schema;
-use DBIx::Class ();
+use Modern::Perl;
+use Carp qw( croak );
+use Mojo::Pg;
 
-use strict;
+my $pg;
 
-my ( $schema_class, $connect_info );
+sub pg {
+    my ( $class, $config ) = @_;
 
-#TODO: Move this to koha_plugin_store.conf (?)
+    return $pg if $pg;
 
-BEGIN {
-    # $ENV{DBIC_TRACE} = 1;
-    $schema_class = 'KohaPluginStore::Schema';
-    $connect_info = {
-        dsn      => 'dbi:SQLite:database.db',
-        user     => '',
-        password => '',
-    };
-}
+    croak('pg_dsn is required (pass a config hashref on the first call)')
+        unless $config && $config->{pg_dsn};
 
-sub new {
-    return __PACKAGE__->config( $schema_class, $connect_info );
-}
+    $pg = Mojo::Pg->new( $config->{pg_dsn} );
 
-sub config {
-    my $class = shift;
-
-    my $self = {
-        schema       => shift,
-        connect_info => shift,
-    };
-
-    my $dbh = $self->{schema}->connect(
-        $self->{connect_info}->{dsn},
-        $self->{connect_info}->{user},
-        $self->{connect_info}->{password}
-    );
-
-    return $dbh;
+    return $pg;
 }
 
 1;
