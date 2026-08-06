@@ -16,13 +16,10 @@ sub _columns {
 }
 
 sub check_password {
-    my ( $username, $password ) = @_;
+    my ( $self, $password ) = @_;
 
     return undef unless $password;
-    my $user = KohaPluginStore::Model::User->new->find( { username => $username } );
-
-    return undef unless $user;
-    return Passwords::password_verify( $password, $user->password );
+    return Passwords::password_verify( $password, $self->password );
 }
 
 sub create {
