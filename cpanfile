@@ -9,3 +9,4 @@ requires 'Archive::Zip';
 requires 'String::Util';
 requires 'IO::Socket::SSL';
 requires 'Net::SSLeay';
+requires 'File::Slurp';
