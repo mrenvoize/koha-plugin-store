@@ -1,0 +1,16 @@
+FROM perl:5.38-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY cpanfile ./
+RUN cpanm --installdeps --notest .
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["morbo", "--listen", "http://*:3000", "script/koha_plugin_store"]
