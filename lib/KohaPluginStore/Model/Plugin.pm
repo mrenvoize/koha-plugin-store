@@ -17,7 +17,7 @@ sub _columns {
 sub releases {
     my ($self) = @_;
 
-    my @versions = KohaPluginStore::Model::PluginVersion->new->search( { plugin_id => $self->id } );
+    my @versions = KohaPluginStore::Model::PluginVersion->new( pg => $self->pg )->search( { plugin_id => $self->id } );
     return \@versions;
 }
 
