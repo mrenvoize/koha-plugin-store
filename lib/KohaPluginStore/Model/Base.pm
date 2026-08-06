@@ -1,18 +1,10 @@
 package KohaPluginStore::Model::Base;
 
-use Modern::Perl;
+use Mojo::Base -base, -signatures;
 use Carp qw( croak );
 
-use KohaPluginStore::Model::DB;
-
-sub new {
-    my ($class) = @_;
-    return bless { _data => undef }, $class;
-}
-
-sub _pg {
-    return KohaPluginStore::Model::DB->pg;
-}
+has 'pg';
+has 'data';
 
 sub default_query_params {
     return { limit => 10 };
@@ -21,7 +13,7 @@ sub default_query_params {
 sub create {
     my ( $self, $attrs ) = @_;
 
-    my $row = $self->_pg->db->insert(
+    my $row = $self->pg->db->insert(
         $self->_table, $attrs, { returning => $self->_columns }
     )->hash;
 
@@ -31,7 +23,7 @@ sub create {
 sub find {
     my ( $self, $query ) = @_;
 
-    my $row = $self->_pg->db->select( $self->_table, undef, $query, { limit => 1 } )->hash;
+    my $row = $self->pg->db->select( $self->_table, undef, $query, { limit => 1 } )->hash;
     return unless $row;
 
     return $self->_new_from_row($row);
@@ -43,19 +35,19 @@ sub search {
     $query = {} unless $query;
     my $merged = { %{ $self->default_query_params }, %{ $params || {} } };
 
-    my $rows = $self->_pg->db->select( $self->_table, undef, $query, $merged )->hashes;
+    my $rows = $self->pg->db->select( $self->_table, undef, $query, $merged )->hashes;
 
     return map { $self->_new_from_row($_) } @$rows;
 }
 
 sub _new_from_row {
     my ( $self, $row ) = @_;
-    return bless { _data => $row }, ref($self) || $self;
+    return ref($self)->new( pg => $self->pg, data => $row );
 }
 
 sub unblessed {
     my ($self) = @_;
-    return { %{ $self->{_data} } };
+    return { %{ $self->data } };
 }
 
 our $AUTOLOAD;
@@ -68,14 +60,14 @@ sub AUTOLOAD {
     return if $method eq 'DESTROY';
 
     croak( $method . ' is not a column on ' . $self->_table )
-        unless $self->{_data} && exists $self->{_data}{$method};
+        unless $self->data && exists $self->data->{$method};
 
     if (@_) {
-        $self->{_data}{$method} = shift;
+        $self->data->{$method} = shift;
         return $self;
     }
 
-    return $self->{_data}{$method};
+    return $self->data->{$method};
 }
 
 1;

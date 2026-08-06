@@ -1,28 +1,34 @@
 package KohaPluginStore;
 use Mojo::Base 'Mojolicious', -signatures;
+use Mojo::Pg;
 
 use KohaPluginStore::Model::User;
 use KohaPluginStore::Model::Plugin;
-use KohaPluginStore::Model::DB;
 
 has site_name => sub {
     my $app = shift;
     return $app->config->{site_name} || 'Koha Plugin Store';
 };
 
+has pg => sub {
+    my $self = shift;
+    return Mojo::Pg->new( $self->config->{pg_dsn} );
+};
+
 sub startup ($self) {
 
     $self->plugin('Config');
-    KohaPluginStore::Model::DB->pg( $self->config );
 
     push @{ $self->commands->namespaces }, 'KohaPluginStore::Command';
+
+    $self->helper( pg => sub { shift->app->pg } );
 
     $self->helper(
         logged_in_user => sub {
             my ( $c, $user ) = @_;
             $user ||= $c->stash->{user} || $c->session->{user};
             return unless $user;
-            return KohaPluginStore::Model::User->new()->find( { username => $user->{username} } )
+            return KohaPluginStore::Model::User->new( pg => $c->pg )->find( { username => $user->{username} } )
               || undef;
         }
     );
