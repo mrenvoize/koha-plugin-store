@@ -15,6 +15,8 @@ sub startup ($self) {
     $self->plugin('Config');
     KohaPluginStore::Model::DB->pg( $self->config );
 
+    push @{ $self->commands->namespaces }, 'KohaPluginStore::Command';
+
     $self->helper(
         logged_in_user => sub {
             my ( $c, $user ) = @_;

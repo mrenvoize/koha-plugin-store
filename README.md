@@ -28,8 +28,8 @@ Koha plugin store project consisting of 2 distinct components:
 
 - Commands
   - Start local Postgres: `docker compose up -d postgres`
-  - Apply migrations: `perl lib/KohaPluginStore/Command/migrate.pl`
-  - Reset test data: `perl lib/KohaPluginStore/Command/reset_test_data.pl`
+  - Apply migrations: `script/koha_plugin_store migrate`
+  - Reset test data: `script/koha_plugin_store reset_test_data`
 
 ### Docker development
 
@@ -38,8 +38,8 @@ No local Perl or Postgres install needed:
 1. `cp koha_plugin_store.conf.docker.example koha_plugin_store.conf` (edit in your
    `github_user_access_token` if you need GitHub-backed features)
 2. `docker compose up -d --build`
-3. `docker compose exec app perl lib/KohaPluginStore/Command/migrate.pl` (first run only)
-4. `docker compose exec app perl lib/KohaPluginStore/Command/reset_test_data.pl` (optional demo data)
+3. `docker compose exec app script/koha_plugin_store migrate` (first run only)
+4. `docker compose exec app script/koha_plugin_store reset_test_data` (optional demo data)
 5. Visit http://127.0.0.1:3000
 
 Edits to the repo on your host are picked up automatically (`morbo` hot-reloads inside the
