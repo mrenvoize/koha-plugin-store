@@ -27,8 +27,8 @@ describes (tables, endpoints, auth flow) exists in the code yet.
 ```bash
 docker compose up -d postgres                          # start local Postgres
 cpanm --installdeps .                                  # install CPAN dependencies (see cpanfile)
-perl lib/KohaPluginStore/Command/migrate.pl             # apply Postgres migrations
-perl lib/KohaPluginStore/Command/reset_test_data.pl     # wipe and reseed demo users/plugins/releases
+script/koha_plugin_store migrate                        # apply Postgres migrations
+script/koha_plugin_store reset_test_data                # wipe and reseed demo users/plugins/releases
 morbo script/koha_plugin_store                          # run dev server with auto-reload
 prove -l t/basic.t                                      # run a single test
 prove -l t/                                             # run all tests
@@ -63,8 +63,11 @@ follow standard Mojolicious controller conventions.
   `insert`/`select` query builder. Column accessors (`->id`, `->name`, etc.) are still
   synthesized via `AUTOLOAD`, but now read/write directly against the fetched row's hash
   rather than reflecting a DBIx::Class result object's columns.
-- Migrations live in `migrations/koha_plugin_store.sql` (Mojo::Pg's built-in `-- 1 up`/
-  `-- 1 down` format), applied via `lib/KohaPluginStore/Command/migrate.pl`.
+- Migrations are SQL statements embedded in `KohaPluginStore::Command::migrate`'s `__DATA__`
+  section (Mojo::Pg's built-in `-- 1 up`/`-- 1 down` format), loaded via `from_data` scheme.
+  The `migrate` command is a `Mojolicious::Command` class registered in `startup()` via
+  `push @{$self->commands->namespaces}, 'KohaPluginStore::Command'`. Similarly, `reset_test_data`
+  is a `Mojolicious::Command` class that wipes and reseeds demo data.
 - `plugin_versions` is the Postgres name for what used to be SQLite's `releases` table;
   the Perl class is `KohaPluginStore::Model::PluginVersion` (was `Model::Release`).
 

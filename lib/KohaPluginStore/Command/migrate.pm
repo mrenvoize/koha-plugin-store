@@ -1,3 +1,35 @@
+package KohaPluginStore::Command::migrate;
+use Mojo::Base 'Mojolicious::Command', -signatures;
+
+use KohaPluginStore::Model::DB;
+
+has description => 'Apply Postgres migrations';
+has usage       => sub { shift->extract_usage };
+
+sub run ($self, @args) {
+    my $pg = KohaPluginStore::Model::DB->pg;
+    $pg->migrations->from_data(__PACKAGE__)->migrate;
+
+    say 'Migrated to version ' . $pg->migrations->latest;
+}
+
+1;
+
+=encoding utf8
+
+=head1 NAME
+
+KohaPluginStore::Command::migrate - Apply Postgres migrations
+
+=head1 SYNOPSIS
+
+  Usage: APPLICATION migrate
+
+=cut
+
+__DATA__
+
+@@ migrations
 -- 1 up
 CREATE TABLE users (
     id       SERIAL PRIMARY KEY,
