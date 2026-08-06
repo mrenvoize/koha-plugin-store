@@ -1,7 +1,6 @@
 package KohaPluginStore::Command::reset_test_data;
 use Mojo::Base 'Mojolicious::Command', -signatures;
 
-use KohaPluginStore::Model::DB;
 use KohaPluginStore::Model::User;
 use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
@@ -10,21 +9,23 @@ has description => 'Wipe and reseed demo users/plugins/releases';
 has usage       => sub { shift->extract_usage };
 
 sub run ($self, @args) {
-    KohaPluginStore::Model::DB->pg->db->query(
+    my $pg = $self->app->pg;
+
+    $pg->db->query(
         'TRUNCATE plugin_versions, plugins, users RESTART IDENTITY CASCADE'
     );
 
     # Users data:
     # admin: admin
     # John: Doe
-    my $admin = KohaPluginStore::Model::User->new->create(
+    my $admin = KohaPluginStore::Model::User->new( pg => $pg )->create(
         { username => 'admin', password => 'admin', email => 'admin@www.com' }
     );
-    KohaPluginStore::Model::User->new->create(
+    KohaPluginStore::Model::User->new( pg => $pg )->create(
         { username => 'John', password => 'Doe', email => 'john@doe.com' }
     );
 
-    my $coverflow = KohaPluginStore::Model::Plugin->new->create(
+    my $coverflow = KohaPluginStore::Model::Plugin->new( pg => $pg )->create(
         {
             author      => 'Kyle M Hall',
             class_name  => 'Koha::Plugin::Com::ByWaterSolutions::CoverFlow',
@@ -36,7 +37,7 @@ sub run ($self, @args) {
             user_id     => $admin->id,
         }
     );
-    KohaPluginStore::Model::PluginVersion->new->create(
+    KohaPluginStore::Model::PluginVersion->new( pg => $pg )->create(
         {
             plugin_id        => $coverflow->id,
             name             => 'v2.5.7',
@@ -48,7 +49,7 @@ sub run ($self, @args) {
         }
     );
 
-    my $ill_actions = KohaPluginStore::Model::Plugin->new->create(
+    my $ill_actions = KohaPluginStore::Model::Plugin->new( pg => $pg )->create(
         {
             author      => 'PTFS-Europe',
             class_name  => 'Koha::Plugin::Com::PTFSEurope::IllActions',
@@ -60,7 +61,7 @@ sub run ($self, @args) {
             user_id     => $admin->id,
         }
     );
-    KohaPluginStore::Model::PluginVersion->new->create(
+    KohaPluginStore::Model::PluginVersion->new( pg => $pg )->create(
         {
             plugin_id        => $ill_actions->id,
             name             => 'v1.3.1',
@@ -72,7 +73,7 @@ sub run ($self, @args) {
         }
     );
 
-    my $pdf_to_cover = KohaPluginStore::Model::Plugin->new->create(
+    my $pdf_to_cover = KohaPluginStore::Model::Plugin->new( pg => $pg )->create(
         {
             author      => 'Mehdi Hamidi, Bouzid Fergani, Arthur Bousquet, The Minh Luong, Matthias Le Gac',
             class_name  => 'Koha::Plugin::PDFtoCover',
@@ -84,7 +85,7 @@ sub run ($self, @args) {
             user_id     => $admin->id,
         }
     );
-    KohaPluginStore::Model::PluginVersion->new->create(
+    KohaPluginStore::Model::PluginVersion->new( pg => $pg )->create(
         {
             plugin_id        => $pdf_to_cover->id,
             name             => 'v2.1',
@@ -96,7 +97,7 @@ sub run ($self, @args) {
         }
     );
 
-    my $lms_event_management = KohaPluginStore::Model::Plugin->new->create(
+    my $lms_event_management = KohaPluginStore::Model::Plugin->new( pg => $pg )->create(
         {
             author      => 'LMSCloud GmbH',
             class_name  => 'Koha::Plugin::Com::LMSCloud::EventManagement',
@@ -108,7 +109,7 @@ sub run ($self, @args) {
             user_id     => $admin->id,
         }
     );
-    KohaPluginStore::Model::PluginVersion->new->create(
+    KohaPluginStore::Model::PluginVersion->new( pg => $pg )->create(
         {
             plugin_id        => $lms_event_management->id,
             name             => 'Carnival',

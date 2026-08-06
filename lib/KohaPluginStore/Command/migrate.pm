@@ -1,13 +1,11 @@
 package KohaPluginStore::Command::migrate;
 use Mojo::Base 'Mojolicious::Command', -signatures;
 
-use KohaPluginStore::Model::DB;
-
 has description => 'Apply Postgres migrations';
 has usage       => sub { shift->extract_usage };
 
 sub run ($self, @args) {
-    my $pg = KohaPluginStore::Model::DB->pg;
+    my $pg = $self->app->pg;
     $pg->migrations->from_data(__PACKAGE__)->migrate;
 
     say 'Migrated to version ' . $pg->migrations->latest;
