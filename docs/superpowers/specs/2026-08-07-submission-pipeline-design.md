@@ -106,6 +106,10 @@ Notes:
   concurrent request.
 - No `signature`/`signed_at`/`level`/`current_level_id` columns — out of scope here (see
   Non-goals).
+- `plugins.name`/`class_name`/`description`/`author` need no nullability change — none
+  carry a `NOT NULL` constraint today, only `UNIQUE`, and Postgres treats multiple `NULL`s
+  as distinct under a unique constraint. So a row can exist with these all `NULL` between
+  creation and the Minion job filling them in, with no migration needed for that alone.
 
 ## Slug generation
 
@@ -114,8 +118,10 @@ plugin's own self-reported metadata name, since the slug must exist before metad
 even parsed. Slugs are unique store-wide (not per-developer), so collisions are handled by
 **insert-and-retry-on-conflict** (attempt insert, catch the unique violation, retry with
 the next numeric suffix — `-2`, `-3`, ...) rather than check-then-insert, to avoid a race
-between two developers submitting similarly-named repos at once. Lives as a small
-`KohaPluginStore::Model::Plugin` helper so the controller stays thin.
+between two developers submitting similarly-named repos at once. Bounded (10 attempts) —
+exhausting them is effectively impossible with real repo names and would indicate
+something else is badly wrong, surfaced as a submission error rather than looping forever.
+Lives as a small `KohaPluginStore::Model::Plugin` helper so the controller stays thin.
 
 ## GitHub token
 
@@ -141,8 +147,10 @@ and `CLAUDE.md` get updated to describe the renamed key and its required scope.
 Same fully-qualified-call convention as the existing `fetch_public_repos` (module-level
 subs, never imported, so tests can override via typeglob assignment):
 
-- `fetch_releases($app_token, $owner_repo)` — recent releases (tag, name, published date,
-  assets, author).
+- `fetch_releases($app_token, $owner_repo)` — the 10 most recent releases (tag, name,
+  published date, assets, author) — a fixed page, no pagination UI, bumped from the
+  current `edit_form`'s `per_page=5` since this now also serves first-time submission
+  (more historical tags worth showing), not just adding a version to an existing plugin.
 - `fetch_release_by_tag($app_token, $owner_repo, $tag_name)` — used at confirm-time to
   re-fetch authoritative data server-side.
 - `download_kpz($app_token, $download_url, $dest_path)` — streams the asset to a temp
@@ -198,8 +206,11 @@ watching the detail page.
   throughout, which is honest — still in progress, not the developer's fault.
 - **Contributors fetch** is best-effort — failure is logged and skipped, never blocks
   publish.
-- **Double-submission** is caught at the DB constraint level (`UNIQUE (plugin_id,
-  tag_name)`) and shown as a friendly "already submitted" message, not a crash.
+- **Double-submission**: the existing app-level "already submitted" check in `edit_form`
+  stays (a quick, friendly pre-check), but is now backed by the real DB constraint
+  (`UNIQUE (plugin_id, tag_name)`) for the race window the app-level check alone can't
+  close — a constraint violation is caught and shown as the same friendly message, not a
+  crash.
 
 ## Testing
 
