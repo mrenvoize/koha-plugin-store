@@ -6,7 +6,9 @@ open). Lands as new commits on `worktree-repo-picker` itself, not a new stacked 
 isn't merged yet, this is a fix to that feature, not a new one on top of it. `worktree-submission-pipeline`
 (#19) and `worktree-home-page-rework` (#20) both already contain #18's current commits, so
 they'll need rebasing onto the updated branch and force-pushing once this lands — confirm with
-the user explicitly before doing that.
+the user explicitly before doing that. (The new migration this adds takes version 3 on
+`worktree-repo-picker`; submission-pipeline's existing migration 3 renumbers to 4 as part of
+that rebase.)
 
 ## Summary
 
@@ -20,150 +22,117 @@ Testing #18 against a real GitHub account (not `oauth_mock`) surfaced two proble
 Root cause of (2): `GitHub::fetch_public_repos` fetches a single
 `GET /user/repos?visibility=public&sort=updated&per_page=100` page. Once personal repo count
 exceeds 100, less-recently-`pushed` org/collaborator repos get silently truncated off the end
-by the `sort=updated` ordering. This is the same bug behind (1) — a proper fix needs real
-pagination, which then makes "how do you find one specific repo in a paginated list" the actual
-design question.
+by the `sort=updated` ordering.
 
-## Design constraint: don't eagerly fetch everything
+## Design history: two rejected approaches, and why
 
-An early version of this design proposed looping through every page up front so the picker
-always has the complete list to search/filter over. Rejected: it turns every `/new-plugin` page
-view into an unbounded number of GitHub API calls before the picker is even usable, for
-accounts that may have very large repo counts. The interactive picker needs to stay genuinely
-lazy — server-driven pagination and search, not a client-side filter over a pre-fetched blob.
+Two earlier shapes of this fix were considered and dropped before landing on the one below —
+worth recording so the reasoning isn't lost:
 
-## Two modes on `GET /api/v1/developer/repos`
+- **Eagerly fetch every page on every `/new-plugin` view.** Fixes the truncation bug directly,
+  but turns every page view into an unbounded number of GitHub API calls before the picker is
+  even usable. Rejected for making a common, cheap page load slow and GitHub-rate-limit-hungry
+  for no reason most visits don't need.
+- **Server-driven pagination for browsing + GitHub's Search API for typed search.** Avoids the
+  eager fetch, but Search API's `user:`/`org:` qualifiers don't cover repos where the developer
+  is merely a collaborator on someone else's personal account (this account's `axxapy`/`jhthorsen`
+  examples) — those would be browsable but not searchable. It also adds a second GitHub API
+  surface with its own tighter rate limit, qualifier-syntax uncertainty, and a chunk of custom
+  frontend JS (scroll-triggered pagination, debounce, mode-switching between browse and search).
 
-GitHub's `/user/repos` (the affiliation-aware listing) has no text-search parameter — only
-`page`/`per_page`/`sort`/`affiliation`/`visibility`. Filtering by typed text requires GitHub's
-separate Search API (`/search/repositories`), which searches by qualifiers
-(`user:`, `org:`, `in:name`), not by "repos this token is affiliated with". So the endpoint
-gains two distinct code paths, chosen by whether a search term is present:
+## The design: an explicit, cached, manually-refreshed repo list
 
-- **Browse** (`GET /api/v1/developer/repos?page=N`, no `q`): a new `GitHub::fetch_repos_page`
-  passes through to
-  `GET https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member&sort=full_name&per_page=30&page=N`.
-  This is the "scroll to load more" path.
-- **Search** (`GET /api/v1/developer/repos?q=<term>&page=N`): a new `GitHub::search_repos` calls
-  `GET https://api.github.com/search/repositories?q=in:name <term> user:<own login> org:<org1> org:<org2>...&per_page=30&page=N`,
-  where the `user:`/`org:` qualifiers come from the developer's own GitHub login (already on
-  the `Developer` model) plus their org memberships (see below). **Open implementation detail:**
-  whether GitHub's search syntax combines multiple qualifiers with implicit OR or AND needs
-  confirming against current GitHub search docs/behaviour before writing this; if OR-combination
-  in a single query isn't reliable, fall back to one search call per qualifier (own login + each
-  org) issued and merged/deduped in Perl, at the cost of juggling multiple pagination cursors.
-- Both branches normalize their very different GitHub response shapes (`/user/repos` returns a
-  bare array; `/search/repositories` returns `{ total_count, incomplete_results, items }`) into
-  the same `{ repos: [...], has_more }` shape before reaching the controller. `has_more` is read
-  off the GitHub response's `Link` header (`rel="next"` present or not) — accurate regardless of
-  page-size edge cases, and identical logic works for both endpoints.
-- Minimum query length of 2 characters before switching into search mode (shorter than that,
-  keep serving browse results) — avoids firing a Search API call per keystroke on a
-  single-character input.
+Fetch everything — but only when the developer deliberately asks for it, not on every page
+view. Once fetched, browsing and searching both happen against that cached list locally, with
+no further GitHub calls and no server round-trip per keystroke.
 
-The frontend never calls GitHub directly — the query/page params exist on this app's own `/api/v1/developer/repos`, proxied server-side, same as today.
+### Storage
 
-## Session: caching org membership at login
+Two new columns on `developers` (migration version 3 on this branch):
 
-Search mode needs the developer's org logins. Fetched once at real-OAuth login time
-(`Controller::Auth::github`'s non-mock branch, right after the profile fetch) via a new
-`GitHub::fetch_orgs($access_token)` (`GET /user/orgs`), stored as `$c->session->{github_orgs}`
-— a separate session key alongside `github_access_token`, not a `developers` table column, same
-pattern already established for the token itself. The `oauth_mock` login path skips this
-(no real token to call GitHub with); search mode simply omits `org:` qualifiers for mock-logged-in
-developers, which is fine since mock login exists to test other things.
+- `cached_repos` — JSONB array of `{full_name, html_url}`, same shape the picker has always
+  used.
+- `cached_repos_fetched_at` — timestamp of the last successful refresh.
 
-## Frontend: Tom Select, server-driven
+### Refreshing the cache
 
-Loaded via CDN `<script>`/`<link>` scoped to `templates/new-plugin.html.ep`'s own
-`content_for 'head'`/`'end'` blocks (matches how Bootstrap/boxicons are already loaded
-elsewhere — no build step, nothing site-wide that only one page needs). The `<select
-id="plugin_repo">` element itself now renders empty — the controller (`Plugins::add_form`) no
-longer pre-fetches anything server-side; Tom Select populates it entirely via
-`GET /api/v1/developer/repos` calls. This simplifies `add_form` back to just rendering the
-template, and removes the need for the current server-rendered "no public GitHub repositories
-found" branch — Tom Select's `render.no_results` option covers that same message for both "you
-have zero repos" and "nothing matches your search", since both are just an empty result set from
-the picker's point of view.
+A new `GitHub::fetch_all_repos($access_token)` loops
+`GET /user/repos?affiliation=owner,collaborator,organization_member&sort=full_name&per_page=100&page=N`
+until a page returns fewer than `per_page` results, or a safety cap (20 pages / ~2000 repos) is
+hit. Because it now correctly covers `affiliation=organization_member` across *all* pages, this
+directly fixes the missing-`openfifth`-repos bug — no Search API needed to make org repos
+visible, they were always included in this listing, just previously truncated.
 
-Behaviour:
+A new route, `POST /developer/repos/refresh`, runs `fetch_all_repos` and writes the result plus
+current timestamp onto the developer's row, then redirects back to `/new-plugin`.
 
-- On first open (`preload: 'focus'`): load browse page 1.
-- Typing (≥2 chars, debounced via Tom Select's `loadThrottle`, ~300ms): switch to search mode,
-  `clearOptions()` and load search page 1 for that term.
-- Clearing the search box back to empty: `clearOptions()`, switch back to browse mode, reload
-  page 1.
-- Scrolling the open dropdown near its bottom, with `hasMore` true and not already loading:
-  request the next page for whichever mode is currently active and `addOption()` the results in
-  (not a full reload) — Tom Select doesn't provide scroll-triggered pagination out of the box, so
-  this is a small (~30-40 line) custom scroll listener on `dropdown_content`, tracking
-  `{ currentQuery, currentPage, hasMore, isLoading }` in the page's own inline script.
+### The picker page
 
-Selecting an option still just sets the `<select>`'s value to the repo's `html_url`, same as
-today — `new_plugin`'s form submission and server-side re-validation (next section) don't change
-shape.
+`GET /new-plugin` shows "Repo list last refreshed at `<cached_repos_fetched_at>` —
+[Refresh]" above the dropdown (or "No repos loaded yet — click Refresh to fetch your GitHub
+repos" if `cached_repos` is still null). `GET /api/v1/developer/repos` goes back to being
+trivial — it returns the developer's `cached_repos` array as-is, no `q`/`page` params, no
+`has_more`.
 
-## Submission-time validation keeps the eager full-fetch — separately
+Tom Select (loaded via CDN `<script>`/`<link>`, scoped to this template's own
+`content_for 'head'`/`'end'` blocks — matches how Bootstrap/boxicons are already loaded
+elsewhere, no build step) is initialized with that array directly as its option list. No
+`load` callback, no debounce, no scroll-triggered pagination — Tom Select filters a local array
+of this size (at most a couple thousand entries, realistically a few hundred) entirely
+client-side, instantly, for free. This removes essentially all the custom JS the Search-API
+version would have needed.
 
-`new_plugin`'s ownership re-check (`Controller::Plugins.pm`, currently line 143) calls
-`fetch_public_repos` and greps the full result for the submitted `html_url`. Replacing that
-function with the paginated one would break this check for anyone with 100+ affiliated repos —
-worse, it's already broken today in exactly that way (a legitimate repo outside the first
-`per_page=100` batch already gets wrongly rejected as "not in your list").
+### First-ever visit
 
-Fix: a new `GitHub::fetch_all_repos($access_token)`, used **only** by this validation path, that
-loops browse-mode pages (same `affiliation`/`sort` as above) until `has_more` is false or a
-safety cap (20 pages / 600 repos) is hit. This is a deliberately different cost/correctness
-trade-off than the interactive picker: it runs once, server-side, at the moment of an actual
-`POST /new-plugin` — already a multi-call, already-blocking operation (fetches the release,
-downloads and extracts the `.kpz`, etc.) — where wrongly rejecting a legitimate submission
-matters more than a few hundred extra milliseconds. Fixing this incidentally fixes the same
-100-repo cap bug for submission, not just for browsing.
+A brand-new developer (`cached_repos` still null) gets the fetch triggered automatically,
+once, the first time they load `/new-plugin` — so the picker isn't uselessly empty before
+they've discovered the Refresh button. Every visit after that is pure cache-plus-manual-refresh,
+identical to everyone else; there's nothing implicit about *staying* fresh, only about not
+starting from a dead end.
 
-## OpenAPI spec
+### Submission-time validation stays live, deliberately
 
-`GET /developer/repos` gains two optional query parameters, `q` (string) and `page` (integer,
-default 1), and the response schema gains a required `has_more` (boolean) alongside the existing
-`repos` array.
+`new_plugin`'s ownership re-check (`Controller::Plugins.pm`, currently line 143) keeps calling
+`fetch_all_repos` fresh at the moment of `POST /new-plugin`, rather than reading
+`cached_repos`. This is a deliberate split: the picker's cache is a convenience the developer
+controls the freshness of, but the security-sensitive check — "is this really still one of your
+repos?" — shouldn't be foolable by a stale cache (e.g. a repo removed from an org, made
+private, or deleted since the developer's last refresh). One extra live GitHub round-trip at
+actual submission time is an acceptable cost on an already multi-call, already-blocking
+operation (it also fetches the release, downloads and extracts the `.kpz`, etc.); it isn't
+paid on every page view the way the rejected eager-fetch approach was.
 
-## Known limitation: collaborator-only repos aren't searchable
+## What this removes from the earlier design
 
-Search mode's `user:`/`org:` qualifiers cover repos the developer owns or that belong to an org
-they're a member of — not repos where they're merely a collaborator on someone else's personal
-account (the `axxapy`/`jhthorsen` examples raised). Those repos still appear fine in the plain
-browse/scroll listing (which uses `affiliation=owner,collaborator,organization_member`), just
-won't be found by typing their name. Accepted as-is for this pass; a future refinement could
-accumulate "owners seen so far this session" from browse pages already loaded and fold them into
-the search qualifiers, but that only helps for owners already scrolled past, so it's a partial
-fix at best and not included here.
+No `search_repos`, no org-membership session caching (`github_orgs`), no `has_more`/`Link`-header
+parsing on the interactive path, no OpenAPI `q`/`page` params, no scroll-pagination JS. All of
+that existed to make browsing lazy while still supporting search — moot once browsing is
+against an already-fetched local cache.
 
 ## Non-goals
 
-- No browser-driven/JS test harness (Playwright etc.) added to this project. The picker's
-  client-side behaviour (Tom Select init, scroll pagination, debounce) isn't covered by
-  `Test::Mojo`-based tests, same as every other piece of inline JS in this app today — see
-  Testing below for what does get covered.
-- No mitigation for the collaborator-repo search gap (previous section).
-- No change to how a selected repo is submitted/validated beyond swapping which `GitHub.pm`
-  function backs the check (previous section) — `new_plugin`'s form shape, error messages, and
-  the rest of the submission flow are untouched.
+- No automatic background refresh (cron, webhook-driven invalidation on GitHub repo
+  create/push, etc.) — refresh is a manual, developer-initiated action, full stop.
+- No incremental/delta sync on refresh — each refresh is a full re-fetch via
+  `fetch_all_repos`, replacing `cached_repos` wholesale. Simpler, and refresh is rare enough
+  that re-fetching everything isn't a real cost.
+- No browser-driven/JS test harness (Playwright etc.) added to this project — Tom Select's
+  client-side filtering isn't covered by `Test::Mojo`-based tests, same as every other piece of
+  inline JS in this app today.
 
 ## Testing
 
-- `t/github.t` gains coverage for `fetch_repos_page` (correct query params, `has_more` derived
-  from the `Link` header), `search_repos` (query construction, GitHub's `items`-wrapped response
-  shape normalized correctly), `fetch_orgs`, and `fetch_all_repos` (loops until `has_more` is
-  false; stops at the safety cap). These need a test seam for the actual HTTP call (a small
-  private `_get`-style sub, mirroring the existing seam pattern in
-  `Controller::Auth::_get_oauth_token_p`/`_fetch_github_profile`), since GitHub.pm currently has
-  no way to intercept its `Mojo::UserAgent` calls in tests.
-- `t/api_developer_repos.t` extends to cover both modes: `?page=N` pass-through, `?q=term`
-  switching to search, and `has_more` in the JSON response.
-- `t/plugins_add_form.t`'s existing subtests (which assert on server-rendered `<option>`
-  elements / the "no repos found" message) get narrowed to asserting the page renders an empty
-  `#plugin_repo` mount point and includes the Tom Select assets — the actual data-population
-  behaviour is exercised through `t/api_developer_repos.t` instead, since that's the real
-  integration point `Test::Mojo` can meaningfully drive without a browser.
-- `t/plugins_new_plugin.t` (submission validation) gets a case for a repo beyond a single
-  browse page's worth of results, proving `fetch_all_repos` finds it where the old
-  single-page `fetch_public_repos` would have wrongly rejected it.
+- `t/github.t` gains coverage for `fetch_all_repos` (loops until a short page; stops at the
+  safety cap), using a test seam for the actual HTTP call (a small private `_get`-style sub,
+  mirroring the existing seam pattern in `Controller::Auth::_get_oauth_token_p`/
+  `_fetch_github_profile`), since `GitHub.pm` currently has no way to intercept its
+  `Mojo::UserAgent` calls in tests.
+- A new `t/developer_repos_refresh.t` covers `POST /developer/repos/refresh`: requires login;
+  populates `cached_repos`/`cached_repos_fetched_at`; redirects to `/new-plugin`.
+- `t/api_developer_repos.t` simplifies to match the trivial endpoint: returns whatever's in
+  `cached_repos` (including the empty/null case), no pagination/search params to exercise.
+- `t/plugins_add_form.t` gains a case for the first-visit auto-fetch (`cached_repos` null →
+  triggers a fetch and populates it) alongside its existing coverage.
+- `t/plugins_new_plugin.t` (submission validation) keeps proving the live-fetch path works
+  correctly for repos beyond a single page — and gains a case showing a submission succeeds
+  even when `cached_repos` is stale/empty, since validation doesn't read it.
