@@ -66,6 +66,8 @@ use Test::Mojo;
 use lib 't/lib';
 use TestDB qw(reset_db test_pg);
 
+use KohaPluginStore::Model::Developer;
+
 reset_db();
 
 my $t = Test::Mojo->new('KohaPluginStore');
@@ -73,15 +75,33 @@ $t->app->pg( test_pg() );
 $t->app->plugin( Minion => { Pg => test_pg() } );
 
 subtest 'the minion helper is registered and can run a trivial job' => sub {
-    my $ran = 0;
-    $t->app->minion->add_task( test_task => sub { $ran = 1 } );
+    $t->app->minion->add_task(
+        test_task => sub {
+            my $job = shift;
+            KohaPluginStore::Model::Developer->new( pg => $job->app->pg )->create(
+                { oauth_provider_key => 'test', provider_user_id => 'minion-smoke-test', username => 'minion-smoke-test' }
+            );
+        }
+    );
     $t->app->minion->enqueue('test_task');
     $t->app->minion->perform_jobs;
-    is( $ran, 1, 'the enqueued job actually ran' );
+
+    my $created = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { provider_user_id => 'minion-smoke-test' }
+    );
+    ok( $created, 'the enqueued job actually ran and wrote to the database' );
 };
 
 done_testing();
 ```
+
+(`perform_jobs` forks a real child process per job — `Minion::Job::perform` calls `fork`
+internally, unlike `perform_jobs_in_foreground`, which runs in-process. A job's writes to
+the shared Postgres are visible back in the test process once `perform_jobs` returns; an
+in-memory Perl variable captured by the job's closure is not, since it lives in the
+child's separate address space. Every later task in this plan checks Minion job outcomes
+via the database for exactly this reason — this smoke test does the same, deliberately, so
+it's representative of the pattern the rest of the plan relies on.)
 
 - [ ] **Step 2: Run it to verify it fails**
 
