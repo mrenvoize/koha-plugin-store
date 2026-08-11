@@ -3,6 +3,7 @@
 %   checks_running     => 'bg-info',
 %   published          => 'bg-success',
 %   changes_requested  => 'bg-danger',
+%   check_error        => 'bg-warning',
 % );
 <table class="table">
   <thead>

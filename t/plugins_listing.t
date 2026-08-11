@@ -63,4 +63,21 @@ subtest 'My Plugins shows the same link and status' => sub {
       ->text_like( 'td.plugin-status span' => qr/checks_running/ );
 };
 
+subtest 'a version stuck in check_error shows its own badge' => sub {
+    reset_db();
+    my $developer = KohaPluginStore::Model::Developer->new( pg => test_pg() )->create(
+        { oauth_provider_key => 'github', provider_user_id => '1', username => 'dev' }
+    );
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', repo_url => 'https://github.com/dev/widget', developer_id => $developer->id }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )
+      ->create( { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'check_error' } );
+
+    $t->get_ok('/plugins')
+      ->status_is(200)
+      ->element_exists('td.plugin-status span.bg-warning')
+      ->text_like( 'td.plugin-status span' => qr/check_error/ );
+};
+
 done_testing();
