@@ -15,6 +15,7 @@
 - Test seams for anything that shells out or hits the network follow the existing typeglob-override pattern (`no strict 'refs'; no warnings 'redefine'; *Package::sub = sub {...};`) already used for `KohaPluginStore::GitHub::fetch_all_repos` etc.
 - `review_checks` is scoped to `plugin_version_id`, never `plugin_id` — certification is per-version.
 - Tier computation is a strict AND-gate at each level (no scoring/weighting): any required check failing → `INCOMPLETE`; all required passing but any *gating* non-required check failing → `STRUCTURAL`; all required and all gating non-required passing → `CERTIFIED`. `KohaMaxVersion` and `GpgSignedTag` are recorded but never participate in this computation.
+- **Project-local Perl dependencies:** `Koha::QA` (Task 6) is installed into a project-local `local/` directory (`cpanm -L local`, `local/` gitignored), never into the machine's shared Perl library. This is because `Koha::QA`'s own `Makefile.PL` hard-pins an exact `Perl::Tidy` version that would otherwise silently downgrade Perl::Tidy for every other project on a shared development machine. Any command that needs it — installing, or running the full test suite from Task 6 onward — must prefix `PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB"`. Never install this dependency into a shared/global Perl library.
 - Full detail and rationale for every decision below lives in `docs/superpowers/specs/2026-08-10-check-pipeline-design.md` — consult it if a task's "why" isn't obvious from the plan alone.
 
 ---
@@ -742,25 +743,40 @@ git commit -m "Add Check::PerlSyntax with sandboxed perl -c"
 
 **Files:**
 - Modify: `cpanfile`
+- Modify: `.gitignore` (add `local/`)
 - Create: `lib/KohaPluginStore/Check/PerlCritic.pm`
 - Test: `t/check_perl_critic.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`, and `Koha::QA::PerlCritic` (new dependency).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`, and `Koha::QA::PerlCritic` (new dependency, installed into a project-local `local/` directory — see Step 1).
 - Produces: `KohaPluginStore::Check::PerlCritic->new->run($extract_dir, $metadata, $context)`.
 
-- [ ] **Step 1: Add the dependency**
+- [ ] **Step 1: Add the dependency, installed into a project-local lib**
 
-Append to `cpanfile`:
+Append to `cpanfile` (this documents the pin; it doesn't make plain `cpanm --installdeps .` actually install it — see below):
 
 ```
 requires 'Koha::QA', git => 'https://gitlab.com/joubu/koha-qa.git', ref => 'c98c2cd6ac14756fd82edc59655b54e11c8c9f31';
-requires 'Perl::Critic';
-requires 'File::ShareDir';
 ```
 
-Run: `cpanm --installdeps .`
-Expected: installs cleanly. Verify with: `perl -Ilib -MKoha::QA::PerlCritic -e 'print "ok\n"'` → prints `ok`.
+Plain `cpanm --installdeps .` (without Carton) does not act on a cpanfile's `git =>`/`ref =>` options — it just searches CPAN/MetaCPAN for the module name and fails, since `Koha::QA` isn't published there. It has to be installed explicitly instead:
+
+```bash
+mkdir -p local
+PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" PATH="$(pwd)/local/bin:$PATH" cpanm -L local --force https://gitlab.com/joubu/koha-qa.git
+```
+
+`--force` is required because `Koha::QA`'s own `Makefile.PL` hard-pins `Perl::Tidy == 20250105`. Installing into the project-local `local/` directory (via `-L local`, a standard `local::lib`-style layered lib — see "Project-local Perl dependencies" in Global Constraints) means that pin only takes effect for code that resolves `Perl::Tidy` through `local/lib/perl5` first; it does not touch or downgrade Perl::Tidy anywhere else on the machine. This is safe here because koha-plugin-store only uses `Koha::QA::PerlCritic` (pure static analysis via PPI — it never touches Perl::Tidy at all); none of `Koha::QA`'s `Tidy::*` modules are consumed.
+
+Add `local/` to `.gitignore` (installed dependencies, never committed — same treatment as `node_modules/`).
+
+Verify with:
+```bash
+PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" perl -Ilib -MKoha::QA::PerlCritic -e 'print "ok\n"'
+```
+→ prints `ok`.
+
+From this task onward, any command that runs the **full** test suite (`prove -l t/`) needs this same `PERL5LIB` prefix, since `t/check_perl_critic.t` (and, from Task 14 onward, the task-level integration test) load `Koha::QA::PerlCritic` transitively. Single-file `prove` runs for check classes that don't touch `Koha::QA` (e.g. `t/check_docs_presence.t`) don't need it, but including the prefix is always harmless.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -798,7 +814,7 @@ done_testing();
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `prove -l t/check_perl_critic.t`
+Run: `PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" prove -l t/check_perl_critic.t`
 Expected: FAIL — module doesn't exist
 
 - [ ] **Step 4: Write minimal implementation**
@@ -835,13 +851,13 @@ sub run ($self, $extract_dir, $metadata, $context) {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `prove -l t/check_perl_critic.t`
+Run: `PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" prove -l t/check_perl_critic.t`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cpanfile lib/KohaPluginStore/Check/PerlCritic.pm t/check_perl_critic.t
+git add cpanfile .gitignore lib/KohaPluginStore/Check/PerlCritic.pm t/check_perl_critic.t
 git commit -m "Depend on Koha::QA and add Check::PerlCritic"
 ```
 
@@ -2062,7 +2078,7 @@ Expected: FAIL before Step 6's template edit is in place, PASS after (Step 6 is 
 
 - [ ] **Step 9: Run the full suite**
 
-Run: `prove -l t/`
+Run: `PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" prove -l t/`
 Expected: PASS — every existing test plus every new one from this plan.
 
 - [ ] **Step 10: Commit**
@@ -2080,6 +2096,6 @@ This work lands on a new worktree/branch stacked on the existing chain (currentl
 
 - [ ] Create a new worktree/branch (e.g. `worktree-check-pipeline`) stacked on top of `worktree-home-page-rework` (the current tip of the chain), via the `superpowers:using-git-worktrees` skill.
 - [ ] Confirm with the user which branch this should stack on before creating it — the chain's tip may have moved since this plan was written.
-- [ ] After all 14 tasks are committed, run the full test suite once more (`prove -l t/`) against a fresh migrated test database to catch any migration-ordering issues.
+- [ ] After all 14 tasks are committed, run the full test suite once more (`PERL5LIB="$(pwd)/local/lib/perl5:$PERL5LIB" prove -l t/`) against a fresh migrated test database to catch any migration-ordering issues.
 - [ ] Push to both `martin` and `origin` remotes (per this session's established convention: any branch that could become another PR's base needs to exist on `origin`, not just the fork).
 - [ ] Open a PR stacked on `worktree-home-page-rework` (#20).
