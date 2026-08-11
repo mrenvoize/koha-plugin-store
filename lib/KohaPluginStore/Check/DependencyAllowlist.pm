@@ -3,6 +3,8 @@ package KohaPluginStore::Check::DependencyAllowlist;
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
 use File::Slurp qw(read_file);
 
+# Known limitation: the open() pattern will also match some relative paths like open($fh, '<', 'templates/foo.tt')
+# because a static regex cannot distinguish absolute vs relative without heavier dynamic analysis (deferred as future work).
 my @RISKY_PATTERNS = (
     [ qr/\bsystem\s*\(/,               'calls system()' ],
     [ qr/\bexec\s*\(/,                 'calls exec()' ],
