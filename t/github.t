@@ -160,4 +160,29 @@ subtest 'fetch_contributors still makes a request with no token configured' => s
     is( $calls, 1, 'the request was made' );
 };
 
+subtest 'fetch_tag_verification returns whether the tag commit is GPG-verified' => sub {
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::_get = sub {
+        my $res = Mojo::Message::Response->new;
+        $res->code(200);
+        $res->body( encode_json( { commit => { verification => { verified => 1 } } } ) );
+        return bless { result => $res }, 'FakeTx';
+    };
+
+    is( KohaPluginStore::GitHub::fetch_tag_verification( 'token', 'https://github.com/dev/widget', 'v1.0.0' ), 1, 'reports verified' );
+};
+
+subtest 'fetch_tag_verification returns undef on a non-200 response' => sub {
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::_get = sub {
+        my $res = Mojo::Message::Response->new;
+        $res->code(404);
+        return bless { result => $res }, 'FakeTx';
+    };
+
+    is( KohaPluginStore::GitHub::fetch_tag_verification( 'token', 'https://github.com/dev/widget', 'v1.0.0' ), undef, 'returns undef' );
+};
+
 done_testing();
