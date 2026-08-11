@@ -220,7 +220,7 @@ git commit -m "Add review_checks table, certification_tier column, and Model::Re
 - Test: `t/check_base.t`
 
 **Interfaces:**
-- Produces: every concrete check subclasses this and must implement `check_name()` (string), `required()` (0/1), `gates_certification()` (0/1), and `run($extract_dir, $metadata, $context)` returning `{ passed => bool, message => str|undef }`. `$context` is a hashref (repo/token/config info — see Task 14) that most checks ignore.
+- Produces: every concrete check subclasses this and must implement `check_name()` (string), `required()` (0/1), `gates_certification()` (0/1), and `run($extract_dir, $metadata, $context)` returning `{ passed => bool, message => str|undef }`. `$context` is a hashref (repo/token/config info — see Task 14) that most checks ignore. Also produces `$self->find_files($dir, $pattern)` — returns a list of absolute paths under `$dir` (recursively) whose filename matches the `qr//` `$pattern`, or an empty list if `$dir` doesn't exist. Six later tasks (4, 6, 8, 9, 10, 11) use this instead of each writing their own `File::Find` block — this was caught during the pre-flight plan scan as duplication a reviewer would otherwise flag six separate times.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -229,6 +229,9 @@ Create `t/check_base.t`:
 ```perl
 use Mojo::Base -strict;
 use Test::More;
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
+use File::Slurp qw(write_file);
 
 use KohaPluginStore::Check::Base;
 
@@ -257,6 +260,25 @@ subtest 'the base class dies if run() is not overridden' => sub {
     like( $@, qr/must implement run/, 'dies with a clear message' );
 };
 
+subtest 'find_files finds matching files recursively' => sub {
+    my $dir = tempdir( CLEANUP => 1 );
+    make_path("$dir/t");
+    write_file( "$dir/Widget.pm",  "package Widget;\n1;\n" );
+    write_file( "$dir/t/basic.t",  "use Test::More;\nok(1);\ndone_testing();\n" );
+    write_file( "$dir/README.md",  "# Widget\n" );
+
+    my $check    = KohaPluginStore::Check::TestDummy->new;
+    my @pm_files = $check->find_files( $dir, qr/\.pm$/ );
+    is( scalar @pm_files, 1, 'found exactly one .pm file' );
+    like( $pm_files[0], qr/Widget\.pm$/, 'found the right file' );
+};
+
+subtest 'find_files returns an empty list for a directory that does not exist' => sub {
+    my $check = KohaPluginStore::Check::TestDummy->new;
+    my @found = $check->find_files( '/no/such/dir', qr/\.pm$/ );
+    is( scalar @found, 0, 'empty list, not a die' );
+};
+
 done_testing();
 ```
 
@@ -273,9 +295,25 @@ Create `lib/KohaPluginStore/Check/Base.pm`:
 package KohaPluginStore::Check::Base;
 
 use Mojo::Base -base, -signatures;
+use File::Find;
 
 sub run ($self, $extract_dir, $metadata, $context) {
     die ref($self) . ' must implement run()';
+}
+
+sub find_files ($self, $dir, $pattern) {
+    return () unless -d $dir;
+
+    my @matches;
+    find(
+        {
+            wanted   => sub { push @matches, $File::Find::name if -f $_ && /$pattern/ },
+            no_chdir => 1,
+        },
+        $dir
+    );
+
+    return @matches;
 }
 
 1;
@@ -386,7 +424,7 @@ git commit -m "Add Check::ManifestCompleteness"
 - Test: `t/check_dependency_allowlist.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`.
 - Produces: `KohaPluginStore::Check::DependencyAllowlist->new->run($extract_dir, $metadata, $context)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -446,7 +484,6 @@ Create `lib/KohaPluginStore/Check/DependencyAllowlist.pm`:
 package KohaPluginStore::Check::DependencyAllowlist;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use File::Slurp qw(read_file);
 
 my @RISKY_PATTERNS = (
@@ -468,23 +505,16 @@ sub gates_certification { 1 }
 sub run ($self, $extract_dir, $metadata, $context) {
     my @issues;
 
-    find(
-        {
-            wanted => sub {
-                return unless -f $_ && /\.(pm|pl)$/;
-                my $content  = read_file($_);
-                my $relative = $File::Find::name;
-                $relative =~ s{^\Q$extract_dir\E/?}{};
+    for my $file ( $self->find_files( $extract_dir, qr/\.(pm|pl)$/ ) ) {
+        my $content  = read_file($file);
+        my $relative = $file;
+        $relative =~ s{^\Q$extract_dir\E/?}{};
 
-                for my $pattern (@RISKY_PATTERNS) {
-                    my ( $re, $description ) = @$pattern;
-                    push @issues, "$relative: $description" if $content =~ $re;
-                }
-            },
-            no_chdir => 1,
-        },
-        $extract_dir
-    );
+        for my $pattern (@RISKY_PATTERNS) {
+            my ( $re, $description ) = @$pattern;
+            push @issues, "$relative: $description" if $content =~ $re;
+        }
+    }
 
     return { passed => 1, message => undef } unless @issues;
     return { passed => 0, message => join( '; ', @issues ) };
@@ -514,7 +544,7 @@ git commit -m "Add Check::DependencyAllowlist"
 - Test: `t/check_perl_syntax.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2). Reads `$context->{koha_checkout_cache_dir}` and `$context->{koha_git_url}` (both optional, with internal defaults) and `$metadata->{minimum_version}`.
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`. Reads `$context->{koha_checkout_cache_dir}` and `$context->{koha_git_url}` (both optional, with internal defaults) and `$metadata->{minimum_version}`.
 - Produces: `KohaPluginStore::Check::PerlSyntax->new->run($extract_dir, $metadata, $context)`. Two test seams: `KohaPluginStore::Check::PerlSyntax::_ensure_checkout($tag, $checkout_dir)` (returns 1/0) and `KohaPluginStore::Check::PerlSyntax::_run_sandboxed($checkout_dir, $extract_dir, \@pm_files)` (returns raw `perl -c` output text). On infrastructure failure (checkout couldn't be prepared), `run()` dies with a message starting `check_infrastructure_error:` — callers (Task 14) must catch this specifically and map it to the `check_error` status, not a check failure.
 
 **Note:** the exact Koha git tag naming convention (`_resolve_tag` below assumes `v<minimum_version>`, e.g. `v23.05.00`) needs confirming against a real `git ls-remote --tags` of Koha core before this is trusted in production — flagged in the design doc as a best-effort placeholder. The test seams mean this doesn't block testing the rest of the check's logic.
@@ -601,7 +631,6 @@ Create `lib/KohaPluginStore/Check/PerlSyntax.pm`:
 package KohaPluginStore::Check::PerlSyntax;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use Fcntl qw(:flock);
@@ -631,8 +660,7 @@ sub run ($self, $extract_dir, $metadata, $context) {
         die "check_infrastructure_error: could not prepare Koha checkout for tag $tag\n";
     }
 
-    my @pm_files;
-    find( { wanted => sub { push @pm_files, $File::Find::name if -f $_ && /\.pm$/ }, no_chdir => 1 }, $extract_dir );
+    my @pm_files = $self->find_files( $extract_dir, qr/\.pm$/ );
 
     return { passed => 1, message => undef } unless @pm_files;
 
@@ -718,7 +746,7 @@ git commit -m "Add Check::PerlSyntax with sandboxed perl -c"
 - Test: `t/check_perl_critic.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2), `Koha::QA::PerlCritic` (new dependency).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`, and `Koha::QA::PerlCritic` (new dependency).
 - Produces: `KohaPluginStore::Check::PerlCritic->new->run($extract_dir, $metadata, $context)`.
 
 - [ ] **Step 1: Add the dependency**
@@ -781,7 +809,6 @@ Create `lib/KohaPluginStore/Check/PerlCritic.pm`:
 package KohaPluginStore::Check::PerlCritic;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use Koha::QA::PerlCritic;
 
 sub check_name         { 'perl_critic' }
@@ -789,8 +816,7 @@ sub required            { 0 }
 sub gates_certification { 1 }
 
 sub run ($self, $extract_dir, $metadata, $context) {
-    my @pm_files;
-    find( { wanted => sub { push @pm_files, $File::Find::name if -f $_ && /\.pm$/ }, no_chdir => 1 }, $extract_dir );
+    my @pm_files = $self->find_files( $extract_dir, qr/\.pm$/ );
 
     return { passed => 1, message => undef } unless @pm_files;
 
@@ -928,7 +954,7 @@ git commit -m "Add Check::DocsPresence"
 - Test: `t/check_tests_presence.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`.
 - Produces: `KohaPluginStore::Check::TestsPresence->new->run($extract_dir, $metadata, $context)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -988,19 +1014,15 @@ Create `lib/KohaPluginStore/Check/TestsPresence.pm`:
 package KohaPluginStore::Check::TestsPresence;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 
 sub check_name         { 'tests_presence' }
 sub required            { 0 }
 sub gates_certification { 1 }
 
 sub run ($self, $extract_dir, $metadata, $context) {
-    return { passed => 0, message => 'No test files (t/*.t) found' } unless -d "$extract_dir/t";
+    my @t_files = $self->find_files( "$extract_dir/t", qr/\.t$/ );
 
-    my $found = 0;
-    find( { wanted => sub { $found = 1 if -f $_ && /\.t$/ }, no_chdir => 1 }, "$extract_dir/t" );
-
-    return { passed => 1, message => undef } if $found;
+    return { passed => 1, message => undef } if @t_files;
     return { passed => 0, message => 'No test files (t/*.t) found' };
 }
 
@@ -1028,7 +1050,7 @@ git commit -m "Add Check::TestsPresence"
 - Test: `t/check_translatable_templates.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`.
 - Produces: `KohaPluginStore::Check::TranslatableTemplates->new->run($extract_dir, $metadata, $context)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1087,7 +1109,6 @@ Create `lib/KohaPluginStore/Check/TranslatableTemplates.pm`:
 package KohaPluginStore::Check::TranslatableTemplates;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use File::Slurp qw(read_file);
 
 # Heuristic, not exhaustive: flags .tt files that render visible text but never
@@ -1100,23 +1121,16 @@ sub gates_certification { 1 }
 sub run ($self, $extract_dir, $metadata, $context) {
     my @untranslated;
 
-    find(
-        {
-            wanted => sub {
-                return unless -f $_ && /\.tt$/;
-                my $content = read_file($_);
-                return unless $content =~ /<(h1|h2|h3|p|label|button|span|td|th)\b/i;
+    for my $file ( $self->find_files( $extract_dir, qr/\.tt$/ ) ) {
+        my $content = read_file($file);
+        next unless $content =~ /<(h1|h2|h3|p|label|button|span|td|th)\b/i;
 
-                unless ( $content =~ /\[%[-~]?\s*t\s*\(/ ) {
-                    my $relative = $File::Find::name;
-                    $relative =~ s{^\Q$extract_dir\E/?}{};
-                    push @untranslated, $relative;
-                }
-            },
-            no_chdir => 1,
-        },
-        $extract_dir
-    );
+        unless ( $content =~ /\[%[-~]?\s*t\s*\(/ ) {
+            my $relative = $file;
+            $relative =~ s{^\Q$extract_dir\E/?}{};
+            push @untranslated, $relative;
+        }
+    }
 
     return { passed => 1, message => undef } unless @untranslated;
 
@@ -1151,7 +1165,7 @@ git commit -m "Add Check::TranslatableTemplates"
 - Test: `t/check_plugin_template_wrapper.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`.
 - Produces: `KohaPluginStore::Check::PluginTemplateWrapper->new->run($extract_dir, $metadata, $context)`.
 
 **Note:** `$REQUIRED_INCLUDE` below (`doc-head-close.inc`) is a best-effort placeholder for the real Koha plugin template wrapper include, pending confirmation against `Koha::Plugins` documentation or a real published plugin's templates — flagged in the design doc as unconfirmed. Update the constant, not the surrounding logic, once confirmed.
@@ -1212,7 +1226,6 @@ Create `lib/KohaPluginStore/Check/PluginTemplateWrapper.pm`:
 package KohaPluginStore::Check::PluginTemplateWrapper;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use File::Slurp qw(read_file);
 
 # NOTE: the exact Koha plugin template wrapper include name below is a
@@ -1228,21 +1241,14 @@ sub gates_certification { 1 }
 sub run ($self, $extract_dir, $metadata, $context) {
     my @missing;
 
-    find(
-        {
-            wanted => sub {
-                return unless -f $_ && /\.tt$/;
-                my $content = read_file($_);
-                unless ( $content =~ /INCLUDE\s+['"]\Q$REQUIRED_INCLUDE\E['"]/ ) {
-                    my $relative = $File::Find::name;
-                    $relative =~ s{^\Q$extract_dir\E/?}{};
-                    push @missing, $relative;
-                }
-            },
-            no_chdir => 1,
-        },
-        $extract_dir
-    );
+    for my $file ( $self->find_files( $extract_dir, qr/\.tt$/ ) ) {
+        my $content = read_file($file);
+        unless ( $content =~ /INCLUDE\s+['"]\Q$REQUIRED_INCLUDE\E['"]/ ) {
+            my $relative = $file;
+            $relative =~ s{^\Q$extract_dir\E/?}{};
+            push @missing, $relative;
+        }
+    }
 
     return { passed => 1, message => undef } unless @missing;
 
@@ -1276,7 +1282,7 @@ git commit -m "Add Check::PluginTemplateWrapper"
 - Test: `t/check_hardcoded_credentials.t`
 
 **Interfaces:**
-- Consumes: `KohaPluginStore::Check::Base` (Task 2).
+- Consumes: `KohaPluginStore::Check::Base` (Task 2), including `$self->find_files($dir, $pattern)`.
 - Produces: `KohaPluginStore::Check::HardcodedCredentials->new->run($extract_dir, $metadata, $context)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1335,7 +1341,6 @@ Create `lib/KohaPluginStore/Check/HardcodedCredentials.pm`:
 package KohaPluginStore::Check::HardcodedCredentials;
 
 use Mojo::Base 'KohaPluginStore::Check::Base', -signatures;
-use File::Find;
 use File::Slurp qw(read_file);
 
 my @PATTERNS = (
@@ -1351,24 +1356,17 @@ sub gates_certification { 1 }
 sub run ($self, $extract_dir, $metadata, $context) {
     my @hits;
 
-    find(
-        {
-            wanted => sub {
-                return unless -f $_ && /\.(pm|pl|tt)$/;
-                my $content = read_file($_);
-                for my $pattern (@PATTERNS) {
-                    if ( $content =~ $pattern ) {
-                        my $relative = $File::Find::name;
-                        $relative =~ s{^\Q$extract_dir\E/?}{};
-                        push @hits, $relative;
-                        last;
-                    }
-                }
-            },
-            no_chdir => 1,
-        },
-        $extract_dir
-    );
+    for my $file ( $self->find_files( $extract_dir, qr/\.(pm|pl|tt)$/ ) ) {
+        my $content = read_file($file);
+        for my $pattern (@PATTERNS) {
+            if ( $content =~ $pattern ) {
+                my $relative = $file;
+                $relative =~ s{^\Q$extract_dir\E/?}{};
+                push @hits, $relative;
+                last;
+            }
+        }
+    }
 
     return { passed => 1, message => undef } unless @hits;
     return { passed => 0, message => 'Possible hardcoded credential(s) found in: ' . join( ', ', @hits ) };
