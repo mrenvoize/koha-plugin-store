@@ -5,3 +5,4 @@ kpz_packages/*
 ssl/*
 node_modules/
 .vscode
+local/
