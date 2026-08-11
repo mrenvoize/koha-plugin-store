@@ -135,3 +135,21 @@ ALTER TABLE plugin_versions DROP COLUMN status;
 
 ALTER TABLE plugins DROP COLUMN documentation_url;
 ALTER TABLE plugins DROP COLUMN slug;
+
+-- 5 up
+ALTER TABLE plugin_versions ADD COLUMN certification_tier TEXT;
+
+CREATE TABLE review_checks (
+    id                SERIAL PRIMARY KEY,
+    plugin_version_id INTEGER REFERENCES plugin_versions(id) ON DELETE CASCADE,
+    check_name        TEXT NOT NULL,
+    required          BOOLEAN NOT NULL,
+    passed            BOOLEAN NOT NULL,
+    message           TEXT,
+    checked_at        TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (plugin_version_id, check_name)
+);
+
+-- 5 down
+DROP TABLE review_checks;
+ALTER TABLE plugin_versions DROP COLUMN certification_tier;
