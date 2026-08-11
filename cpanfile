@@ -11,3 +11,6 @@ requires 'String::Util';
 requires 'IO::Socket::SSL';
 requires 'Net::SSLeay';
 requires 'File::Slurp';
+requires 'Koha::QA', git => 'https://gitlab.com/joubu/koha-qa.git', ref => 'c98c2cd6ac14756fd82edc59655b54e11c8c9f31';
+requires 'Perl::Critic';
+requires 'File::ShareDir';
