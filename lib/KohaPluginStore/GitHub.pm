@@ -117,6 +117,19 @@ sub fetch_contributors {
     ];
 }
 
+sub fetch_tag_verification {
+    my ( $access_token, $owner_repo, $tag_name ) = @_;
+
+    return unless $tag_name;
+
+    my $api_repo = $owner_repo =~ s{^https://github\.com/}{https://api.github.com/repos/}r;
+    my $tx = _get( "$api_repo/commits/$tag_name", $access_token );
+
+    return unless $tx->result->code == 200;
+
+    return $tx->result->json->{commit}{verification}{verified} ? 1 : 0;
+}
+
 sub _trim_release {
     my ($release) = @_;
 
