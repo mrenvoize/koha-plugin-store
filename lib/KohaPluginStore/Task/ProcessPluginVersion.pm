@@ -12,6 +12,8 @@ use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
 use KohaPluginStore::Model::PluginContributor;
 use KohaPluginStore::GitHub;
+use KohaPluginStore::Checks;
+use KohaPluginStore::Model::ReviewCheck;
 
 sub register {
     my ($app) = @_;
@@ -119,12 +121,59 @@ sub run {
         }
     }
 
+    my $check_context = {
+        repo_url     => $plugin->repo_url,
+        tag_name     => $version->tag_name,
+        github_token => $token,
+    };
+
+    my $review_check_model = KohaPluginStore::Model::ReviewCheck->new( pg => $app->pg );
+    my $required_failed;
+    my $gating_failed;
+
+    for my $check_class (@KohaPluginStore::Checks::ALL) {
+        my $check  = $check_class->new;
+        my $result = eval { $check->run( $extract_dir, $metadata, $check_context ) };
+        if ($@) {
+            if ( $@ =~ /^check_infrastructure_error/ ) {
+                return $version->update( { status => 'check_error', error_message => "$check_class: $@" } );
+            }
+            die $@;
+        }
+
+        $review_check_model->record(
+            {
+                plugin_version_id => $version->id,
+                check_name        => $check->check_name,
+                required          => $check->required,
+                passed            => $result->{passed},
+                message           => $result->{message},
+            }
+        );
+
+        if ( !$result->{passed} ) {
+            $required_failed = 1 if $check->required;
+            $gating_failed   = 1 if $check->gates_certification;
+        }
+    }
+
+    if ($required_failed) {
+        return $version->update(
+            {
+                status             => 'changes_requested',
+                certification_tier => 'INCOMPLETE',
+                error_message      => 'One or more required checks failed -- see the version page for details.',
+            }
+        );
+    }
+
     $version->update(
         {
-            status           => 'published',
-            content_digest   => $digest,
-            version          => $metadata->{version},
-            koha_min_version => $metadata->{minimum_version},
+            status             => 'published',
+            content_digest     => $digest,
+            version            => $metadata->{version},
+            koha_min_version   => $metadata->{minimum_version},
+            certification_tier => $gating_failed ? 'STRUCTURAL' : 'CERTIFIED',
         }
     );
 }

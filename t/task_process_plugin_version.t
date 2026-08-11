@@ -13,6 +13,7 @@ use KohaPluginStore::Model::Developer;
 use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
 use KohaPluginStore::Model::PluginContributor;
+use KohaPluginStore::Model::ReviewCheck;
 
 reset_db();
 
@@ -28,6 +29,16 @@ sub make_kpz {
     return $zip_path;
 }
 
+sub make_multi_file_kpz {
+    my ($files) = @_;
+    my $dir      = tempdir( CLEANUP => 1 );
+    my $zip_path = "$dir/fixture.kpz";
+    my $zip      = Archive::Zip->new;
+    $zip->addString( $files->{$_}, $_ ) for keys %$files;
+    $zip->writeToFileNamed($zip_path);
+    return $zip_path;
+}
+
 my $valid_plugin_pm = <<'PERL';
 package Koha::Plugin::Test::Widget;
 use base qw(Koha::Plugins::Base);
@@ -36,6 +47,8 @@ our $metadata = {
     description => 'A test widget',
     author => 'Someone',
     minimum_version => '23.05',
+    version => '1.0.0',
+    license => 'GPL-3.0',
 };
 1;
 PERL
@@ -69,6 +82,8 @@ subtest 'successful processing publishes the version' => sub {
     *KohaPluginStore::GitHub::fetch_contributors = sub {
         return [ { github_username => 'octocat', avatar_url => 'https://example.com/a.png', contributions_count => 5 } ];
     };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed = sub { return "syntax OK\n" };
 
     $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
     $t->app->minion->perform_jobs_in_foreground;
@@ -129,6 +144,8 @@ subtest 'a zip with no plugin class file sets changes_requested' => sub {
         copy( $fixture_zip, $dest_path ) or die "copy failed: $!";
         return 1;
     };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed = sub { return "syntax OK\n" };
 
     $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
     $t->app->minion->perform_jobs_in_foreground;
@@ -163,6 +180,8 @@ PERL
         return 1;
     };
     *KohaPluginStore::GitHub::fetch_contributors = sub { return [] };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed = sub { return "syntax OK\n" };
 
     $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
     $t->app->minion->perform_jobs_in_foreground;
@@ -191,12 +210,215 @@ subtest 'a contributors fetch failure does not block publishing' => sub {
         return 1;
     };
     *KohaPluginStore::GitHub::fetch_contributors = sub { die 'GitHub is down' };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed = sub { return "syntax OK\n" };
 
     $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
     $t->app->minion->perform_jobs_in_foreground;
 
     my $reloaded = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->find( { id => $version->id } );
     is( $reloaded->status, 'published', 'status is still published despite the contributors fetch failing' );
+};
+
+subtest 'a fully compliant version reaches CERTIFIED' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', kpz_url => 'https://example.com/widget.kpz', status => 'submitted' }
+    );
+
+    my $fixture_zip = make_multi_file_kpz(
+        {
+            'Widget.pm' => <<'PERL',
+package Widget;
+use Modern::Perl;
+use base qw(Koha::Plugins::Base);
+our $metadata = {
+    name            => 'Widget',
+    description     => 'A test widget',
+    author          => 'Someone',
+    minimum_version => '23.05',
+    maximum_version => '23.11',
+    version         => '1.0.0',
+    license         => 'GPL-3.0',
+};
+1;
+PERL
+            'Development.md'   => "# Development\n",
+            't/basic.t'         => "use Test::More;\nok(1);\ndone_testing();\n",
+            'templates/page.tt' => "[% INCLUDE 'doc-head-close.inc' %]\n<h1>[% t('Hello') %]</h1>\n",
+        }
+    );
+
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::download_kpz = sub {
+        my ( $token, $url, $dest_path ) = @_;
+        copy( $fixture_zip, $dest_path ) or die "copy failed: $!";
+        return 1;
+    };
+    *KohaPluginStore::GitHub::fetch_contributors           = sub { return [] };
+    *KohaPluginStore::GitHub::fetch_tag_verification       = sub { return 0 };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout  = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed    = sub { return "syntax OK\n" };
+
+    $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
+    $t->app->minion->perform_jobs_in_foreground;
+
+    my $reloaded = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->find( { id => $version->id } );
+    is( $reloaded->status, 'published', 'status is published' );
+    is( $reloaded->certification_tier, 'CERTIFIED', 'certification_tier is CERTIFIED' );
+
+    my @checks = KohaPluginStore::Model::ReviewCheck->new( pg => test_pg() )->search( { plugin_version_id => $version->id }, { limit => 100 } );
+    is( scalar @checks, 11, 'a review_checks row was recorded for every check' );
+    is( scalar( grep { $_->passed } @checks ), 10, 'every check passed except the non-gating GPG signature check' );
+};
+
+subtest 'passing only required checks reaches STRUCTURAL' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', kpz_url => 'https://example.com/widget.kpz', status => 'submitted' }
+    );
+
+    my $fixture_zip = make_multi_file_kpz(
+        {
+            'Widget.pm' => <<'PERL',
+package Widget;
+use Modern::Perl;
+use base qw(Koha::Plugins::Base);
+our $metadata = {
+    name            => 'Widget',
+    description     => 'A test widget',
+    author          => 'Someone',
+    minimum_version => '23.05',
+    version         => '1.0.0',
+    license         => 'GPL-3.0',
+};
+1;
+PERL
+        }
+    );
+
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::download_kpz = sub {
+        my ( $token, $url, $dest_path ) = @_;
+        copy( $fixture_zip, $dest_path ) or die "copy failed: $!";
+        return 1;
+    };
+    *KohaPluginStore::GitHub::fetch_contributors           = sub { return [] };
+    *KohaPluginStore::GitHub::fetch_tag_verification       = sub { return 0 };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout  = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed    = sub { return "syntax OK\n" };
+
+    $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
+    $t->app->minion->perform_jobs_in_foreground;
+
+    my $reloaded = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->find( { id => $version->id } );
+    is( $reloaded->status, 'published', 'status is published' );
+    is( $reloaded->certification_tier, 'STRUCTURAL', 'certification_tier is STRUCTURAL, not CERTIFIED' );
+};
+
+subtest 'failing a required check reaches INCOMPLETE and never publishes' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', kpz_url => 'https://example.com/widget.kpz', status => 'submitted' }
+    );
+
+    my $fixture_zip = make_multi_file_kpz(
+        {
+            'Widget.pm' => <<'PERL',
+package Widget;
+use Modern::Perl;
+use base qw(Koha::Plugins::Base);
+our $metadata = {
+    name            => 'Widget',
+    description     => 'A test widget',
+    author          => 'Someone',
+    minimum_version => '23.05',
+    version         => '1.0.0',
+};
+1;
+PERL
+        }
+    );
+
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::download_kpz = sub {
+        my ( $token, $url, $dest_path ) = @_;
+        copy( $fixture_zip, $dest_path ) or die "copy failed: $!";
+        return 1;
+    };
+    *KohaPluginStore::GitHub::fetch_contributors           = sub { return [] };
+    *KohaPluginStore::GitHub::fetch_tag_verification       = sub { return 0 };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout  = sub { return 1 };
+    *KohaPluginStore::Check::PerlSyntax::_run_sandboxed    = sub { return "syntax OK\n" };
+
+    $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
+    $t->app->minion->perform_jobs_in_foreground;
+
+    my $reloaded = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->find( { id => $version->id } );
+    is( $reloaded->status, 'changes_requested', 'status is changes_requested' );
+    is( $reloaded->certification_tier, 'INCOMPLETE', 'certification_tier is INCOMPLETE' );
+
+    my $manifest_check = KohaPluginStore::Model::ReviewCheck->new( pg => test_pg() )->find(
+        { plugin_version_id => $version->id, check_name => 'manifest_completeness' }
+    );
+    ok( !$manifest_check->passed, 'the manifest_completeness check row records the failure' );
+};
+
+subtest 'a sandbox infrastructure failure sets check_error, not changes_requested' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', kpz_url => 'https://example.com/widget.kpz', status => 'submitted' }
+    );
+
+    my $fixture_zip = make_multi_file_kpz(
+        {
+            'Widget.pm' => <<'PERL',
+package Widget;
+use Modern::Perl;
+use base qw(Koha::Plugins::Base);
+our $metadata = {
+    name            => 'Widget',
+    description     => 'A test widget',
+    author          => 'Someone',
+    minimum_version => '23.05',
+    version         => '1.0.0',
+    license         => 'GPL-3.0',
+};
+1;
+PERL
+        }
+    );
+
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::download_kpz = sub {
+        my ( $token, $url, $dest_path ) = @_;
+        copy( $fixture_zip, $dest_path ) or die "copy failed: $!";
+        return 1;
+    };
+    *KohaPluginStore::GitHub::fetch_contributors          = sub { return [] };
+    *KohaPluginStore::Check::PerlSyntax::_ensure_checkout = sub { return 0 };
+
+    $t->app->minion->enqueue( process_plugin_version => [ $version->id ] );
+    $t->app->minion->perform_jobs_in_foreground;
+
+    my $reloaded = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->find( { id => $version->id } );
+    is( $reloaded->status, 'check_error', 'status is check_error, not changes_requested' );
 };
 
 done_testing();
