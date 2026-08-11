@@ -754,7 +754,7 @@ git commit -m "Add Check::PerlSyntax with sandboxed perl -c"
 Append to `cpanfile`:
 
 ```
-requires 'Koha::QA', git => 'git@gitlab.com:joubu/koha-qa.git', ref => 'c98c2cd6ac14756fd82edc59655b54e11c8c9f31';
+requires 'Koha::QA', git => 'https://gitlab.com/joubu/koha-qa.git', ref => 'c98c2cd6ac14756fd82edc59655b54e11c8c9f31';
 requires 'Perl::Critic';
 requires 'File::ShareDir';
 ```
