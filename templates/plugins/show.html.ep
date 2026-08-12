@@ -7,7 +7,6 @@
 % my $github_releases = stash('github_releases') || [];
 % my %tier_badge = ( CERTIFIED => 'text-bg-success', STRUCTURAL => 'text-bg-warning', INCOMPLETE => 'text-bg-danger' );
 % my $plugin_title = $plugin->name || 'Processing submission...';
-% my $has_published = grep { $_->status eq 'published' } @$versions;
 % title $plugin_title;
 % layout 'default';
 % if ($still_processing) {
@@ -66,7 +65,7 @@
         </thead>
         <tbody>
           % for my $version (@$versions) {
-          % next if !$is_owner && $version->status ne 'published' && $has_published;
+          % next if !$is_owner && $version->status ne 'published';
           <tr>
             %= t td => $version->tag_name
             %= t td => ($version->version || '-')
