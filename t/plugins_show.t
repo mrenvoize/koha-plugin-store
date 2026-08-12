@@ -136,4 +136,61 @@ subtest 'a logged-in owner triggers a GitHub releases fetch; a public visitor do
     is( $fetch_calls, 0, 'public view does not fetch GitHub releases' );
 };
 
+subtest 'public visitor sees only published versions and no GitHub-available section' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', repo_url => 'https://github.com/dev/widget' }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'published' }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v0.9.0', status => 'changes_requested', certification_tier => 'INCOMPLETE' }
+    );
+
+    $t->get_ok( '/plugins/' . $plugin->slug )
+      ->status_is(200)
+      ->content_like(qr/v1\.0\.0/)
+      ->content_unlike(qr/v0\.9\.0/)
+      ->content_unlike(qr/Releases from.*github/is)
+      ->element_exists_not('#edit-plugin-modal');
+};
+
+subtest 'owner sees all versions plus the GitHub-available section and an edit control' => sub {
+    reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', repo_url => 'https://github.com/dev/widget', developer_id => $owner->id }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'published' }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v0.9.0', status => 'changes_requested', certification_tier => 'INCOMPLETE' }
+    );
+
+    {
+        no strict 'refs';
+        no warnings 'redefine';
+        *KohaPluginStore::GitHub::fetch_releases = sub {
+            return [ { name => 'v2.0.0', tag_name => 'v2.0.0', published_at => '2026-01-01', assets => [ { name => 'plugin.kpz' } ] } ];
+        };
+    }
+
+    $t->get_ok( '/plugins/' . $plugin->slug )
+      ->status_is(200)
+      ->content_like(qr/v1\.0\.0/)
+      ->content_like(qr/v0\.9\.0/)
+      ->content_like(qr/v2\.0\.0/)
+      ->element_exists('#edit-plugin-modal');
+
+    $t->get_ok('/logout');
+};
+
 done_testing();

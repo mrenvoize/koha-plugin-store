@@ -3,8 +3,11 @@
 % my $contributors = stash 'contributors';
 % my $still_processing = stash 'still_processing';
 % my $checks_by_version = stash('checks_by_version') || {};
+% my $is_owner = stash 'is_owner';
+% my $github_releases = stash('github_releases') || [];
 % my %tier_badge = ( CERTIFIED => 'text-bg-success', STRUCTURAL => 'text-bg-warning', INCOMPLETE => 'text-bg-danger' );
 % my $plugin_title = $plugin->name || 'Processing submission...';
+% my $has_published = grep { $_->status eq 'published' } @$versions;
 % title $plugin_title;
 % layout 'default';
 % if ($still_processing) {
@@ -17,71 +20,171 @@
   %= include 'partial/side_menu'
 % end
 
-<h2><%= $plugin_title %></h2>
-% if ($plugin->description) {
-<p><%= $plugin->description %></p>
-% }
-
-<h3>Versions</h3>
-<table class="table">
-  <thead>
-    <tr>
-      <th>Tag</th>
-      <th>Version</th>
-      <th>Status</th>
-      <th>Certification</th>
-      <th>Checks</th>
-    </tr>
-  </thead>
-  <tbody>
-    % for my $version (@$versions) {
-    <tr>
-      %= t td => $version->tag_name
-      %= t td => ($version->version || '-')
-      %= t td => $version->status
-      <td>
-        % if ($version->certification_tier) {
-          <span class="badge <%= $tier_badge{$version->certification_tier} || 'text-bg-secondary' %>"><%= $version->certification_tier %></span>
-        % }
-      </td>
-      <td>
-        % if ($version->error_message) {
-          <div class="alert alert-warning py-2 mb-2"><%= $version->error_message %></div>
-        % }
-        % my $checks = $checks_by_version->{$version->id} || [];
-        % if (@$checks) {
-        <table class="table table-sm mb-0">
-          <thead>
-            <tr>
-              <th>Check</th>
-              <th>Required</th>
-              <th>Result</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            % for my $check (@$checks) {
-            <tr class="<%= $check->passed ? 'text-success' : 'text-danger' %>">
-              %= t td => $check->check_name
-              %= t td => ($check->required ? 'Required' : 'Advisory')
-              %= t td => ($check->passed ? 'Passed' : 'Failed')
-              %= t td => ($check->message || '')
-            </tr>
-            % }
-          </tbody>
-        </table>
-        % }
-      </td>
-    </tr>
-    % }
-  </tbody>
-</table>
-
-% if (@$contributors) {
-<h3>Contributors</h3>
-<ul class="list-unstyled">
-  % for my $contributor (@$contributors) {
-  <li><img src="<%= $contributor->avatar_url %>" width="24" height="24"> <%= $contributor->github_username %></li>
-  % }
+<ul class="nav nav-tabs" id="plugin-tabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="plugin-details" data-bs-toggle="tab" data-bs-target="#plugin-details-tab" type="button" role="tab" aria-controls="plugin-details-tab" aria-selected="true">Details</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="plugin-releases" data-bs-toggle="tab" data-bs-target="#plugin-releases-tab" type="button" role="tab" aria-controls="plugin-releases-tab" aria-selected="false">Releases</button>
+  </li>
 </ul>
+<div class="tab-content" id="plugin-tab-content">
+  <div class="tab-pane fade show active" id="plugin-details-tab" role="tabpanel" aria-labelledby="plugin-details">
+    <div id="main-details">
+      <h2><%= $plugin_title %><% if ($is_owner) { %> <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#edit-plugin-modal">Edit</button><% } %></h2>
+      % if ($plugin->description) {
+      <p><%= $plugin->description %></p>
+      % }
+      <dl class="row">
+        <dt class="col-sm-2">Repository</dt>
+        <dd class="col-sm-10"><%= $plugin->repo_url %></dd>
+        <dt class="col-sm-2">Author</dt>
+        <dd class="col-sm-10"><%= $plugin->author %></dd>
+      </dl>
+
+      % if (@$contributors) {
+      <h3>Contributors</h3>
+      <ul class="list-unstyled">
+        % for my $contributor (@$contributors) {
+        <li><img src="<%= $contributor->avatar_url %>" width="24" height="24"> <%= $contributor->github_username %></li>
+        % }
+      </ul>
+      % }
+    </div>
+  </div>
+  <div class="tab-pane fade" id="plugin-releases-tab" role="tabpanel" aria-labelledby="plugin-releases">
+    <div id="main-releases">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Tag</th>
+            <th>Version</th>
+            <th>Status</th>
+            <th>Certification</th>
+            <th>Checks</th>
+          </tr>
+        </thead>
+        <tbody>
+          % for my $version (@$versions) {
+          % next if !$is_owner && $version->status ne 'published' && $has_published;
+          <tr>
+            %= t td => $version->tag_name
+            %= t td => ($version->version || '-')
+            %= t td => $version->status
+            <td>
+              % if ($version->certification_tier) {
+                <span class="badge <%= $tier_badge{$version->certification_tier} || 'text-bg-secondary' %>"><%= $version->certification_tier %></span>
+              % }
+            </td>
+            <td>
+              % if ($version->error_message) {
+                <div class="alert alert-warning py-2 mb-2"><%= $version->error_message %></div>
+              % }
+              % my $checks = $checks_by_version->{$version->id} || [];
+              % if (@$checks) {
+              <table class="table table-sm mb-0">
+                <thead>
+                  <tr>
+                    <th>Check</th>
+                    <th>Required</th>
+                    <th>Result</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  % for my $check (@$checks) {
+                  <tr class="<%= $check->passed ? 'text-success' : 'text-danger' %>">
+                    %= t td => $check->check_name
+                    %= t td => ($check->required ? 'Required' : 'Advisory')
+                    %= t td => ($check->passed ? 'Passed' : 'Failed')
+                    %= t td => ($check->message || '')
+                  </tr>
+                  % }
+                </tbody>
+              </table>
+              % }
+            </td>
+          </tr>
+          % }
+        </tbody>
+      </table>
+
+      % if ($is_owner) {
+      <h3>Releases from <i class='bx bxl-github'></i> github:</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Tag name</th>
+            <th>Published at</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          % for my $release (@$github_releases) {
+            % if ($release->{message}->{success}) {
+            <tr class="text-success">
+            % } elsif ($release->{message}->{error}) {
+            <tr class="text-danger">
+            % } else {
+            <tr>
+            % }
+              %= t td => $release->{name}
+              %= t td => $release->{tag_name}
+              %= t td => $release->{published_at}
+              % if ($release->{message}->{success}) {
+              %= t td => $release->{message}->{success}
+              % } elsif ($release->{message}->{error}) {
+              %= t td => $release->{message}->{error}
+              % } else {
+              %= t td => form_for '/new-release' => (method => 'POST') => begin
+                <input type="hidden" name="plugin_id" value="<%= $plugin->id %>">
+                <input type="hidden" name="tag_name" value="<%= $release->{tag_name} %>">
+                <button type="submit" class="btn btn-primary">Add this release</button>
+              % end
+              % }
+            </tr>
+          % }
+        </tbody>
+      </table>
+      % }
+    </div>
+  </div>
+</div>
+
+% if ($is_owner) {
+<div class="modal fade" id="edit-plugin-modal" tabindex="-1" aria-labelledby="edit-plugin-modal-label" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      %= form_for '/plugins/'.$plugin->slug.'/edit' => (method => 'POST') => begin
+        <div class="modal-header">
+          <h5 class="modal-title" id="edit-plugin-modal-label">Edit plugin</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="name">Name:</label>
+            <input required type="text" class="form-control" name="name" id="name" value="<%= $plugin->name %>">
+          </div>
+          <div class="mb-3">
+            <label for="description">Description:</label>
+            <input required type="text" class="form-control" name="description" id="description" value="<%= $plugin->description %>">
+          </div>
+          <div class="mb-3">
+            <label for="repo_url">Repository URL:</label>
+            <input required type="text" class="form-control" name="repo_url" id="repo_url" value="<%= $plugin->repo_url %>">
+          </div>
+          <div class="mb-3">
+            <label for="author">Author:</label>
+            <input required type="text" class="form-control" name="author" id="author" value="<%= $plugin->author %>">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      % end
+    </div>
+  </div>
+</div>
 % }
