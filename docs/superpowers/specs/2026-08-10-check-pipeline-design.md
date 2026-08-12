@@ -277,3 +277,8 @@ author-reputation design lands on.
   weighted-average scoring has no equivalent) are worth proposing back to
   `koha-plugin-certification` given how much of its existing check catalogue this design already
   leans on for structure/inspiration.
+- **`DependencyAllowlist` has no path for legitimate use** — a real plugin (`koha-plugin-crontab`)
+  hit this in practice: no way to disclose "yes, this shells out, and here's why" short of removing
+  the capability entirely. See
+  `docs/superpowers/specs/2026-08-12-capability-declarations-design.md` for a declare/verify/surface
+  model that addresses this without weakening the check for undeclared usage.
