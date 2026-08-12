@@ -2,6 +2,8 @@
 % my $versions = stash 'versions';
 % my $contributors = stash 'contributors';
 % my $still_processing = stash 'still_processing';
+% my $checks_by_version = stash('checks_by_version') || {};
+% my %tier_badge = ( CERTIFIED => 'text-bg-success', STRUCTURAL => 'text-bg-warning', INCOMPLETE => 'text-bg-danger' );
 % my $plugin_title = $plugin->name || 'Processing submission...';
 % title $plugin_title;
 % layout 'default';
@@ -27,7 +29,8 @@
       <th>Tag</th>
       <th>Version</th>
       <th>Status</th>
-      <th>Details</th>
+      <th>Certification</th>
+      <th>Checks</th>
     </tr>
   </thead>
   <tbody>
@@ -36,7 +39,39 @@
       %= t td => $version->tag_name
       %= t td => ($version->version || '-')
       %= t td => $version->status
-      %= t td => ($version->error_message || '')
+      <td>
+        % if ($version->certification_tier) {
+          <span class="badge <%= $tier_badge{$version->certification_tier} || 'text-bg-secondary' %>"><%= $version->certification_tier %></span>
+        % }
+      </td>
+      <td>
+        % if ($version->error_message) {
+          <div class="alert alert-warning py-2 mb-2"><%= $version->error_message %></div>
+        % }
+        % my $checks = $checks_by_version->{$version->id} || [];
+        % if (@$checks) {
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Required</th>
+              <th>Result</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            % for my $check (@$checks) {
+            <tr class="<%= $check->passed ? 'text-success' : 'text-danger' %>">
+              %= t td => $check->check_name
+              %= t td => ($check->required ? 'Required' : 'Advisory')
+              %= t td => ($check->passed ? 'Passed' : 'Failed')
+              %= t td => ($check->message || '')
+            </tr>
+            % }
+          </tbody>
+        </table>
+        % }
+      </td>
     </tr>
     % }
   </tbody>

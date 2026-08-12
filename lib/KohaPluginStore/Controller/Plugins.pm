@@ -3,6 +3,7 @@ use Mojo::Base 'Mojolicious::Controller', -signatures;
 use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
 use KohaPluginStore::Model::PluginContributor;
+use KohaPluginStore::Model::ReviewCheck;
 use KohaPluginStore::GitHub;
 use JSON;
 
@@ -102,11 +103,20 @@ sub show ($c) {
 
     my $still_processing = grep { $_->status eq 'submitted' || $_->status eq 'checks_running' } @versions;
 
+    my %checks_by_version;
+    if (@versions) {
+        my @checks = KohaPluginStore::Model::ReviewCheck->new( pg => $c->pg )->search(
+            { plugin_version_id => [ map { $_->id } @versions ] }, { order_by => 'check_name' }
+        );
+        push @{ $checks_by_version{ $_->plugin_version_id } }, $_ for @checks;
+    }
+
     $c->stash(
-        plugin           => $plugin,
-        versions         => \@versions,
-        contributors     => \@contributors,
-        still_processing => $still_processing,
+        plugin            => $plugin,
+        versions          => \@versions,
+        contributors      => \@contributors,
+        still_processing  => $still_processing,
+        checks_by_version => \%checks_by_version,
     );
     $c->render('plugins/show');
 }
