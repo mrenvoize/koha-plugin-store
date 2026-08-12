@@ -5,6 +5,7 @@ services:
       - postgres
     volumes:
       - .:/app
+      - koha_plugin_store_local:/app/local
     ports:
       - "3000:3000"
 
@@ -14,6 +15,7 @@ services:
       - postgres
     volumes:
       - .:/app
+      - koha_plugin_store_local:/app/local
     command: ["perl", "script/koha_plugin_store", "minion", "worker"]
 
   postgres:
@@ -29,3 +31,4 @@ services:
 
 volumes:
   koha_plugin_store_pgdata:
+  koha_plugin_store_local:
