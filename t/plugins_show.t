@@ -9,6 +9,7 @@ use TestDB qw(reset_db test_app test_pg);
 use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
 use KohaPluginStore::Model::ReviewCheck;
+use KohaPluginStore::Model::Developer;
 
 reset_db();
 
@@ -100,6 +101,39 @@ subtest 'a changes_requested version shows per-check results, not just the gener
       ->content_like(qr/lib\/Foo\.pm: syntax error at line 12/)
       ->content_like(qr/docs_presence/)
       ->content_like(qr/INCOMPLETE/);
+};
+
+subtest 'a logged-in owner triggers a GitHub releases fetch; a public visitor does not' => sub {
+    reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');    # logs in as mockdev
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
+
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget', developer_id => $owner->id }
+    );
+    KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'published' }
+    );
+
+    my $fetch_calls = 0;
+    {
+        no strict 'refs';
+        no warnings 'redefine';
+        *KohaPluginStore::GitHub::fetch_releases = sub { $fetch_calls++; return []; };
+    }
+
+    $t->get_ok( '/plugins/' . $plugin->slug )->status_is(200);
+    is( $fetch_calls, 1, 'owner view fetches GitHub releases' );
+
+    $t->get_ok('/logout');
+    $fetch_calls = 0;
+    $t->get_ok( '/plugins/' . $plugin->slug )->status_is(200);
+    is( $fetch_calls, 0, 'public view does not fetch GitHub releases' );
 };
 
 done_testing();
