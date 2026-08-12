@@ -121,6 +121,53 @@ list server-side, since the dropdown alone doesn't stop a hand-crafted request.
 the Koha-side Vue client calls; it filters releases by `koha_version_release`
 (compatible minimum Koha version) passed as a query param.
 
+### Check pipeline (certification)
+
+`KohaPluginStore::Task::ProcessPluginVersion` runs every class listed in
+`KohaPluginStore::Checks::@ALL` (11 checks, see README's "Automated checks"
+section for what each one verifies) sequentially, in-process, inside the same
+Minion job that already unpacked the `.kpz` and parsed metadata — not fanned
+out to separate jobs, since the catalogue is small and only one check
+(`perl_syntax`) is slow enough to matter.
+
+- Each check is a `KohaPluginStore::Check::Base` subclass exposing
+  `check_name`, `required` (gates publish), `gates_certification` (gates the
+  `CERTIFIED` tier without blocking publish), and `run($extract_dir,
+  $metadata, $context)` returning `{ passed => bool, message => str|undef }`.
+  `Base` supplies `find_files($dir, $regex)` for the file-scanning checks.
+- `$context` carries `repo_url`/`tag_name`/`github_token` — currently only
+  `gpg_signed_tag` uses it (to call GitHub's tag-verification API).
+- A check `die`-ing with a `check_infrastructure_error` prefix (currently only
+  `perl_syntax`, if it can't prepare the sandboxed Koha checkout) is treated
+  differently from a normal failure: the job sets `status = 'check_error'`
+  and stops immediately, rather than recording it as the plugin's own fault.
+- Every result — required checks and gating checks alike — is upserted into
+  `review_checks` (`Model::ReviewCheck->record`, unique on
+  `(plugin_version_id, check_name)`, so re-running is idempotent) regardless
+  of pass/fail, before tier computation happens.
+- `certification_tier` (`INCOMPLETE` / `STRUCTURAL` / `CERTIFIED`) is computed
+  once, after all 11 have run: any required-check failure → `INCOMPLETE` and
+  `status` stays `changes_requested`; otherwise any gating-check failure →
+  `STRUCTURAL`; otherwise `CERTIFIED`. Both are set together with `status =>
+  'published'` in one `update`.
+- `perl_syntax` is the one check that shells out to Docker (`docker run --rm
+  --network none --memory 256m --cpus 0.5 --read-only`, wrapped in `timeout
+  --signal=KILL 30`) to run `perl -cw` against a cached shallow clone of the
+  Koha tag matching the plugin's `minimum_version`. This means the app's own
+  container (or host) needs Docker socket access and network egress to
+  `git.koha-community.org` the first time each Koha version is needed;
+  subsequent checks reuse the cached checkout under
+  `/var/cache/koha-plugin-store/koha-checkouts` (overridable via
+  `$context->{koha_checkout_cache_dir}`).
+- `perl_critic` depends on `Koha::QA::PerlCritic`, which — unlike everything
+  else in `cpanfile` — isn't on CPAN. See the `cpanfile` comment for the
+  exact `cpanm -L local --force <git-url>@<ref>` install command; it must
+  land in a project-local `local/` (its `Makefile.PL` pins an exact
+  `Perl::Tidy` version that would otherwise get silently upgraded machine-
+  wide by `Perl::Critic`'s own dependency resolution), and anything that
+  loads it — the app, `minion worker`, and `prove` — needs
+  `PERL5LIB=$(pwd)/local/lib/perl5` set first.
+
 ### Templates
 
 Server-rendered Mojolicious `.html.ep` templates under `templates/`, Bootstrap-based,
