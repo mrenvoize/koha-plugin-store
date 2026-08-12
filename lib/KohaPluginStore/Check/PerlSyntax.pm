@@ -70,6 +70,27 @@ sub _ensure_checkout {
     return $ok;
 }
 
+# Pure command builder, split out from _run_sandboxed so the exact argv list
+# handed to exec() can be asserted on without forking/execing docker. Returns
+# a flat list -- NOT a shell string -- so no path or generated $script content
+# is ever parsed by a shell, however many quotes or slashes it contains.
+sub _build_sandbox_cmd {
+    my ( $checkout_dir, $extract_dir, $pm_files ) = @_;
+
+    my @relative = map { my $f = $_; $f =~ s{^\Q$extract_dir\E/?}{}; $f } @$pm_files;
+    my $script   = join( '; ', map { qq{system('perl', '-I/koha/lib', '-cw', '/plugin/$_')} } @relative );
+
+    return (
+        'timeout', '--signal=KILL', '30',
+        'docker', 'run', '--rm', '--network', 'none',
+        '--memory', '256m', '--cpus', '0.5', '--read-only', '--tmpfs', '/tmp',
+        '-v', "$checkout_dir:/koha:ro",
+        '-v', "$extract_dir:/plugin:ro",
+        'perl:5.38-slim',
+        'perl', '-e', $script,
+    );
+}
+
 # Test seam: overridden in tests to avoid needing Docker.
 #
 # Wrapped in `timeout --signal=KILL` so a plugin file that hangs the compiler
@@ -80,15 +101,30 @@ sub _ensure_checkout {
 # client can in rare cases leave the container itself running past the
 # timeout since --rm only cleans up on normal exit; revisit with an explicit
 # `docker kill` sweep if that's observed in practice.
+#
+# Runs docker directly via fork+exec (no shell) -- the previous version built
+# this as one big backtick-executed shell string, and $script's own single
+# quotes (from the per-file `system('perl', ...)` calls) broke out of the
+# outer `perl -e '$script'` shell quoting for any plugin at all, corrupting
+# the command the sandbox actually ran.
 sub _run_sandboxed {
     my ( $checkout_dir, $extract_dir, $pm_files ) = @_;
 
-    my @relative = map { my $f = $_; $f =~ s{^\Q$extract_dir\E/?}{}; $f } @$pm_files;
-    my $script   = join( '; ', map { qq{system('perl', '-I/koha/lib', '-cw', '/plugin/$_')} } @relative );
+    my @cmd = _build_sandbox_cmd( $checkout_dir, $extract_dir, $pm_files );
 
-    return `timeout --signal=KILL 30 docker run --rm --network none --memory 256m --cpus 0.5 --read-only --tmpfs /tmp ` .
-        `-v $checkout_dir:/koha:ro -v $extract_dir:/plugin:ro perl:5.38-slim ` .
-        `perl -e '$script' 2>&1`;
+    my $pid = open( my $fh, '-|' );
+    die "Could not fork: $!\n" unless defined $pid;
+
+    if ( $pid == 0 ) {
+        open( STDERR, '>&STDOUT' ) or die "Could not redirect STDERR: $!\n";
+        exec(@cmd) or die "Could not exec docker: $!\n";
+    }
+
+    local $/;
+    my $output = <$fh> // '';
+    close $fh;
+
+    return $output;
 }
 
 1;
