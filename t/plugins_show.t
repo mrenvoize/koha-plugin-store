@@ -36,8 +36,15 @@ subtest 'a published version shows no auto-refresh' => sub {
 
 subtest 'a submitted version shows the auto-refresh meta tag' => sub {
     reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
     my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
-        'widget', { repo_url => 'https://github.com/dev/widget' }
+        'widget', { repo_url => 'https://github.com/dev/widget', developer_id => $owner->id }
     );
     KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
         { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'submitted' }
@@ -50,8 +57,15 @@ subtest 'a submitted version shows the auto-refresh meta tag' => sub {
 
 subtest 'a checks_running version shows the auto-refresh meta tag' => sub {
     reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
     my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
-        'widget', { repo_url => 'https://github.com/dev/widget' }
+        'widget', { repo_url => 'https://github.com/dev/widget', developer_id => $owner->id }
     );
     KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
         { plugin_id => $plugin->id, tag_name => 'v1.0.0', status => 'checks_running' }
@@ -64,8 +78,15 @@ subtest 'a checks_running version shows the auto-refresh meta tag' => sub {
 
 subtest 'a changes_requested version shows per-check results, not just the generic error message' => sub {
     reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
     my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
-        'widget', { repo_url => 'https://github.com/dev/widget' }
+        'widget', { repo_url => 'https://github.com/dev/widget', developer_id => $owner->id }
     );
     my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
         {
@@ -191,6 +212,40 @@ subtest 'owner sees all versions plus the GitHub-available section and an edit c
       ->element_exists('#edit-plugin-modal');
 
     $t->get_ok('/logout');
+};
+
+subtest 'public visitor with zero published versions sees empty releases table, no certification details' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        {
+            plugin_id          => $plugin->id,
+            tag_name           => 'v1.0.0',
+            version            => '1.0.0',
+            status             => 'changes_requested',
+            certification_tier => 'INCOMPLETE',
+            error_message      => 'One or more required checks failed'
+        }
+    );
+    KohaPluginStore::Model::ReviewCheck->new( pg => test_pg() )->record(
+        {
+            plugin_version_id => $version->id,
+            check_name        => 'perl_syntax',
+            required          => 1,
+            passed            => 0,
+            message           => 'Syntax error',
+        }
+    );
+
+    # Public visitor should not see any version details
+    $t->get_ok( '/plugins/' . $plugin->slug )
+      ->status_is(200)
+      ->content_unlike(qr/v1\.0\.0/)
+      ->content_unlike(qr/INCOMPLETE/)
+      ->content_unlike(qr/perl_syntax/)
+      ->content_unlike(qr/Syntax error/);
 };
 
 done_testing();
