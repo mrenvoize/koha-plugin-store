@@ -1,0 +1,91 @@
+use Mojo::Base -strict;
+
+use Test::More;
+use Test::Mojo;
+
+use lib 't/lib';
+use TestDB qw(reset_db test_app test_pg);
+
+use KohaPluginStore::Model::Plugin;
+use KohaPluginStore::Model::Developer;
+
+reset_db();
+
+my $t = test_app();
+
+subtest 'unknown slug is a 404' => sub {
+    $t->post_ok( '/plugins/does-not-exist/edit' => form => { name => 'x', description => 'x', repo_url => 'x', author => 'x' } )
+      ->status_is(404);
+};
+
+subtest 'a non-owner cannot update the plugin' => sub {
+    reset_db();
+
+    # The real owner -- a different developer than the one who logs in below.
+    my $real_owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->create(
+        { oauth_provider_key => 'github', provider_user_id => 'real-owner', username => 'realowner' }
+    );
+
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');    # logs in as mockdev, NOT $real_owner
+    $t->app->config->{oauth_mock} = 0;
+
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', repo_url => 'https://github.com/dev/widget', developer_id => $real_owner->id }
+    );
+
+    $t->post_ok( '/plugins/' . $plugin->slug . '/edit' => form => { name => 'Changed', description => 'x', repo_url => 'x', author => 'x' } )
+      ->status_is(401);
+
+    $t->get_ok('/logout');
+};
+
+subtest 'a blank required field re-renders the page with an error and preserves input' => sub {
+    reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', description => 'Original', repo_url => 'https://github.com/dev/widget', author => 'Dev', developer_id => $owner->id }
+    );
+
+    $t->post_ok( '/plugins/' . $plugin->slug . '/edit' => form => { name => 'Widget', description => '', repo_url => 'https://github.com/dev/widget', author => 'Dev' } )
+      ->status_is(200)
+      ->content_like(qr/required/i)
+      ->element_exists('input[name="name"][value="Widget"]');
+
+    my $reloaded = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->find( { id => $plugin->id } );
+    is( $reloaded->description, 'Original', 'description was not changed on validation failure' );
+
+    $t->get_ok('/logout');
+};
+
+subtest 'a valid update persists and redirects to the plugin page' => sub {
+    reset_db();
+    $t->app->config->{oauth_mock} = 1;
+    $t->get_ok('/auth/github');
+    $t->app->config->{oauth_mock} = 0;
+
+    my $owner = KohaPluginStore::Model::Developer->new( pg => test_pg() )->find(
+        { oauth_provider_key => 'github', provider_user_id => 'mock' }
+    );
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { name => 'Widget', description => 'Original', repo_url => 'https://github.com/dev/widget', author => 'Dev', developer_id => $owner->id }
+    );
+
+    $t->post_ok( '/plugins/' . $plugin->slug . '/edit' =>
+        form => { name => 'Widget', description => 'Updated description', repo_url => 'https://github.com/dev/widget', author => 'Dev' } )
+      ->status_is(302)
+      ->header_is( Location => '/plugins/' . $plugin->slug );
+
+    my $reloaded = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->find( { id => $plugin->id } );
+    is( $reloaded->description, 'Updated description', 'description was updated' );
+
+    $t->get_ok('/logout');
+};
+
+done_testing();
