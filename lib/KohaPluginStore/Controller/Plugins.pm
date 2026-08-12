@@ -88,11 +88,8 @@ sub edit_form {
     $c->render('plugins/edit');
 }
 
-sub show ($c) {
-    my $slug = $c->param('slug');
-
-    my $plugin = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find( { slug => $slug } );
-    return $c->render( text => 'Plugin not found', status => 404 ) unless $plugin;
+sub _plugin_page_stash {
+    my ( $c, $plugin ) = @_;
 
     my @versions = KohaPluginStore::Model::PluginVersion->new( pg => $c->pg )->search(
         { plugin_id => $plugin->id }, { order_by => { -desc => 'id' } }
@@ -111,13 +108,44 @@ sub show ($c) {
         push @{ $checks_by_version{ $_->plugin_version_id } }, $_ for @checks;
     }
 
-    $c->stash(
+    my $is_owner = $c->session->{developer} && $c->session->{developer}->{id} == $plugin->developer_id ? 1 : 0;
+
+    my $github_releases;
+    if ($is_owner) {
+        my $config = $c->app->plugin('Config');
+        $github_releases = KohaPluginStore::GitHub::fetch_releases( $config->{github_app_token}, $plugin->repo_url );
+
+        my $existing_tags = { map { $_->tag_name => 1 } @versions };
+        foreach my $release (@$github_releases) {
+            if ( $existing_tags->{ $release->{tag_name} } ) {
+                $release->{message}->{success} = 'Release has already been submitted.';
+                next;
+            }
+            my @kpz_assets = grep { $_->{name} =~ /\.kpz$/ } @{ $release->{assets} };
+            if ( scalar @kpz_assets != 1 ) {
+                $release->{message}->{error} = 'Release must contain one and only one \'.kpz\' asset.';
+            }
+        }
+    }
+
+    return {
         plugin            => $plugin,
         versions          => \@versions,
         contributors      => \@contributors,
         still_processing  => $still_processing,
         checks_by_version => \%checks_by_version,
-    );
+        is_owner          => $is_owner,
+        github_releases   => $github_releases,
+    };
+}
+
+sub show ($c) {
+    my $slug = $c->param('slug');
+
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find( { slug => $slug } );
+    return $c->render( text => 'Plugin not found', status => 404 ) unless $plugin;
+
+    $c->stash( %{ $c->_plugin_page_stash($plugin) } );
     $c->render('plugins/show');
 }
 
