@@ -8,6 +8,7 @@ use TestDB qw(reset_db test_app test_pg);
 
 use KohaPluginStore::Model::Plugin;
 use KohaPluginStore::Model::PluginVersion;
+use KohaPluginStore::Model::ReviewCheck;
 
 reset_db();
 
@@ -58,6 +59,47 @@ subtest 'a checks_running version shows the auto-refresh meta tag' => sub {
     $t->get_ok( '/plugins/' . $plugin->slug )
       ->status_is(200)
       ->element_exists('meta[http-equiv="refresh"]');
+};
+
+subtest 'a changes_requested version shows per-check results, not just the generic error message' => sub {
+    reset_db();
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => test_pg() )->create_with_unique_slug(
+        'widget', { repo_url => 'https://github.com/dev/widget' }
+    );
+    my $version = KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+        {
+            plugin_id          => $plugin->id,
+            tag_name           => 'v1.0.0',
+            status             => 'changes_requested',
+            certification_tier => 'INCOMPLETE',
+            error_message      => 'One or more required checks failed -- see the version page for details.',
+        }
+    );
+    KohaPluginStore::Model::ReviewCheck->new( pg => test_pg() )->record(
+        {
+            plugin_version_id => $version->id,
+            check_name        => 'perl_syntax',
+            required          => 1,
+            passed            => 0,
+            message           => "lib/Foo.pm: syntax error at line 12",
+        }
+    );
+    KohaPluginStore::Model::ReviewCheck->new( pg => test_pg() )->record(
+        {
+            plugin_version_id => $version->id,
+            check_name        => 'docs_presence',
+            required          => 0,
+            passed            => 1,
+            message           => undef,
+        }
+    );
+
+    $t->get_ok( '/plugins/' . $plugin->slug )
+      ->status_is(200)
+      ->content_like(qr/perl_syntax/)
+      ->content_like(qr/lib\/Foo\.pm: syntax error at line 12/)
+      ->content_like(qr/docs_presence/)
+      ->content_like(qr/INCOMPLETE/);
 };
 
 done_testing();
