@@ -53,40 +53,6 @@ sub refresh_repos {
     $c->redirect_to('/new-plugin');
 }
 
-sub edit_form {
-    my $c = shift;
-
-    my $plugin_id = $c->param('id');
-    my $plugin    = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find(
-        {
-            id => $plugin_id,
-        }
-    );
-
-    return $c->render( text => 'Plugin not found', status => 404 ) unless $plugin;
-    return $c->render( text => 'Unauthorized',     status => 401 ) unless $c->session->{developer}->{id} == $plugin->developer_id;
-
-    my $config          = $c->app->plugin('Config');
-    my $github_releases = KohaPluginStore::GitHub::fetch_releases( $config->{github_app_token}, $plugin->repo_url );
-
-    my $existing_tags = { map { $_->tag_name => 1 } @{ $plugin->releases } };
-
-    foreach my $release (@$github_releases) {
-        if ( $existing_tags->{ $release->{tag_name} } ) {
-            $release->{message}->{success} = 'Release has already been submitted.';
-            next;
-        }
-
-        my @kpz_assets = grep { $_->{name} =~ /\.kpz$/ } @{ $release->{assets} };
-        if ( scalar @kpz_assets != 1 ) {
-            $release->{message}->{error} = 'Release must contain one and only one \'.kpz\' asset.';
-        }
-    }
-
-    $c->stash( plugin          => $plugin );
-    $c->stash( github_releases => $github_releases );
-    $c->render('plugins/edit');
-}
 
 sub _plugin_page_stash {
     my ( $c, $plugin ) = @_;
@@ -147,6 +113,29 @@ sub show ($c) {
 
     $c->stash( %{ $c->_plugin_page_stash($plugin) } );
     $c->render('plugins/show');
+}
+
+sub update_plugin ($c) {
+    my $slug = $c->param('slug');
+
+    my $plugin = KohaPluginStore::Model::Plugin->new( pg => $c->pg )->find( { slug => $slug } );
+    return $c->render( text => 'Plugin not found', status => 404 ) unless $plugin;
+    return $c->render( text => 'Unauthorized', status => 401 )
+        unless $c->session->{developer} && $c->session->{developer}->{id} == $plugin->developer_id;
+
+    my %fields = map { $_ => $c->param($_) } qw(name description repo_url author);
+
+    for my $field (qw(name description repo_url author)) {
+        next if defined $fields{$field} && length $fields{$field};
+
+        $c->stash( %{ $c->_plugin_page_stash($plugin) } );
+        $c->stash( errors => ['All fields are required.'], form_values => \%fields );
+        return $c->render('plugins/show');
+    }
+
+    $plugin->update( \%fields );
+
+    return $c->redirect_to( '/plugins/' . $plugin->slug );
 }
 
 sub list_all ($c) {

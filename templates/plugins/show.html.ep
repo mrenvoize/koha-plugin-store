@@ -5,6 +5,8 @@
 % my $checks_by_version = stash('checks_by_version') || {};
 % my $is_owner = stash 'is_owner';
 % my $github_releases = stash('github_releases') || [];
+% my $errors = stash('errors') || [];
+% my $form_values = stash('form_values') || {};
 % my %tier_badge = ( CERTIFIED => 'text-bg-success', STRUCTURAL => 'text-bg-warning', INCOMPLETE => 'text-bg-danger' );
 % my $plugin_title = $plugin->name || 'Processing submission...';
 % title $plugin_title;
@@ -27,6 +29,15 @@
     <button class="nav-link" id="plugin-releases" data-bs-toggle="tab" data-bs-target="#plugin-releases-tab" type="button" role="tab" aria-controls="plugin-releases-tab" aria-selected="false">Releases</button>
   </li>
 </ul>
+% if (@$errors) {
+<div class="alert alert-danger">
+  <ul class="mb-0">
+    % for my $error (@$errors) {
+    <li><%= $error %></li>
+    % }
+  </ul>
+</div>
+% }
 <div class="tab-content" id="plugin-tab-content">
   <div class="tab-pane fade show active" id="plugin-details-tab" role="tabpanel" aria-labelledby="plugin-details">
     <div id="main-details">
@@ -163,19 +174,19 @@
         <div class="modal-body">
           <div class="mb-3">
             <label for="name">Name:</label>
-            <input required type="text" class="form-control" name="name" id="name" value="<%= $plugin->name %>">
+            <input required type="text" class="form-control" name="name" id="name" value="<%= $form_values->{name} // $plugin->name %>">
           </div>
           <div class="mb-3">
             <label for="description">Description:</label>
-            <input required type="text" class="form-control" name="description" id="description" value="<%= $plugin->description %>">
+            <input required type="text" class="form-control" name="description" id="description" value="<%= $form_values->{description} // $plugin->description %>">
           </div>
           <div class="mb-3">
             <label for="repo_url">Repository URL:</label>
-            <input required type="text" class="form-control" name="repo_url" id="repo_url" value="<%= $plugin->repo_url %>">
+            <input required type="text" class="form-control" name="repo_url" id="repo_url" value="<%= $form_values->{repo_url} // $plugin->repo_url %>">
           </div>
           <div class="mb-3">
             <label for="author">Author:</label>
-            <input required type="text" class="form-control" name="author" id="author" value="<%= $plugin->author %>">
+            <input required type="text" class="form-control" name="author" id="author" value="<%= $form_values->{author} // $plugin->author %>">
           </div>
         </div>
         <div class="modal-footer">
@@ -186,4 +197,12 @@
     </div>
   </div>
 </div>
+% }
+
+% if (@$errors) {
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  new bootstrap.Modal(document.getElementById('edit-plugin-modal')).show();
+});
+</script>
 % }
