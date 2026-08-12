@@ -82,6 +82,7 @@ sub _plugin_page_stash {
         $github_releases = KohaPluginStore::GitHub::fetch_releases( $config->{github_app_token}, $plugin->repo_url );
 
         my $existing_tags = { map { $_->tag_name => 1 } @versions };
+        # Annotate each release with submission status; no-op if github_releases is empty.
         foreach my $release (@$github_releases) {
             if ( $existing_tags->{ $release->{tag_name} } ) {
                 $release->{message}->{success} = 'Release has already been submitted.';
