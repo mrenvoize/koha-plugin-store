@@ -117,17 +117,36 @@ sub fetch_contributors {
     ];
 }
 
+# An annotated tag (`git tag -a`/`-s`) has its own tag object with its own
+# signature, separate from the commit it points at -- a GPG-signed tag
+# pointing at an otherwise-unsigned commit is common and valid. GitHub's
+# /commits/{ref} endpoint auto-dereferences straight through the tag to that
+# commit, so checking it alone reports a genuinely signed tag as unverified.
+# A lightweight tag (no separate tag object) has no signature of its own, so
+# the closest meaningful signal there is whether the commit it points
+# directly at is signed.
 sub fetch_tag_verification {
     my ( $access_token, $owner_repo, $tag_name ) = @_;
 
     return unless $tag_name;
 
     my $api_repo = $owner_repo =~ s{^https://github\.com/}{https://api.github.com/repos/}r;
-    my $tx = _get( "$api_repo/commits/$tag_name", $access_token );
 
-    return unless $tx->result->code == 200;
+    my $ref_tx = _get( "$api_repo/git/refs/tags/$tag_name", $access_token );
+    return unless $ref_tx->result->code == 200;
 
-    return $tx->result->json->{commit}{verification}{verified} ? 1 : 0;
+    my $object = $ref_tx->result->json->{object};
+    return unless $object;
+
+    if ( $object->{type} eq 'tag' ) {
+        my $tag_tx = _get( "$api_repo/git/tags/$object->{sha}", $access_token );
+        return unless $tag_tx->result->code == 200;
+        return $tag_tx->result->json->{verification}{verified} ? 1 : 0;
+    }
+
+    my $commit_tx = _get( "$api_repo/commits/$object->{sha}", $access_token );
+    return unless $commit_tx->result->code == 200;
+    return $commit_tx->result->json->{commit}{verification}{verified} ? 1 : 0;
 }
 
 sub _trim_release {

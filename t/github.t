@@ -160,17 +160,57 @@ subtest 'fetch_contributors still makes a request with no token configured' => s
     is( $calls, 1, 'the request was made' );
 };
 
-subtest 'fetch_tag_verification returns whether the tag commit is GPG-verified' => sub {
+subtest 'fetch_tag_verification reports a signed annotated tag as verified, independent of its commit' => sub {
     no strict 'refs';
     no warnings 'redefine';
     *KohaPluginStore::GitHub::_get = sub {
-        my $res = Mojo::Message::Response->new;
-        $res->code(200);
-        $res->body( encode_json( { commit => { verification => { verified => 1 } } } ) );
-        return bless { result => $res }, 'FakeTx';
+        my ($url) = @_;
+        if ( $url =~ m{/git/refs/tags/} ) {
+            return _fake_release_tx( { object => { sha => 'tagsha123', type => 'tag' } } );
+        }
+        if ( $url =~ m{/git/tags/tagsha123} ) {
+            # The tag object itself is signed -- deliberately not asked about
+            # the underlying commit's own (possibly unsigned) verification.
+            return _fake_release_tx( { verification => { verified => 1 } } );
+        }
+        die "unexpected URL: $url";
     };
 
     is( KohaPluginStore::GitHub::fetch_tag_verification( 'token', 'https://github.com/dev/widget', 'v1.0.0' ), 1, 'reports verified' );
+};
+
+subtest 'fetch_tag_verification reports an unsigned annotated tag as unverified' => sub {
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::_get = sub {
+        my ($url) = @_;
+        if ( $url =~ m{/git/refs/tags/} ) {
+            return _fake_release_tx( { object => { sha => 'tagsha123', type => 'tag' } } );
+        }
+        if ( $url =~ m{/git/tags/tagsha123} ) {
+            return _fake_release_tx( { verification => { verified => 0 } } );
+        }
+        die "unexpected URL: $url";
+    };
+
+    is( KohaPluginStore::GitHub::fetch_tag_verification( 'token', 'https://github.com/dev/widget', 'v1.0.0' ), 0, 'reports unverified' );
+};
+
+subtest 'fetch_tag_verification falls back to the commit for a lightweight tag' => sub {
+    no strict 'refs';
+    no warnings 'redefine';
+    *KohaPluginStore::GitHub::_get = sub {
+        my ($url) = @_;
+        if ( $url =~ m{/git/refs/tags/} ) {
+            return _fake_release_tx( { object => { sha => 'commitsha456', type => 'commit' } } );
+        }
+        if ( $url =~ m{/commits/commitsha456} ) {
+            return _fake_release_tx( { commit => { verification => { verified => 1 } } } );
+        }
+        die "unexpected URL: $url";
+    };
+
+    is( KohaPluginStore::GitHub::fetch_tag_verification( 'token', 'https://github.com/dev/widget', 'v1.0.0' ), 1, 'reports the commit\'s own verification' );
 };
 
 subtest 'fetch_tag_verification returns undef on a non-200 response' => sub {
