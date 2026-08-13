@@ -1,11 +1,15 @@
 FROM perl:5.36-slim
 
+# docker.io gives us the `docker` CLI the worker's PerlSyntax check shells out
+# to (against the host's socket, mounted in by docker-compose.yml) -- Debian
+# bundles dockerd in the same package, but nothing here ever starts it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     git \
     nodejs \
     npm \
+    docker.io \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g yarn
 
