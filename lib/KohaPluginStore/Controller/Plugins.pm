@@ -149,7 +149,7 @@ sub list_all ($c) {
     foreach my $plugin (@plugins) {
         my @releases =
             map { $_->unblessed } KohaPluginStore::Model::PluginVersion->new( pg => $c->pg )->search(
-                { plugin_id => $plugin->{id} }, { order_by => { -desc => 'date_released' } }
+                { plugin_id => $plugin->{id}, status => 'published' }, { order_by => { -desc => 'date_released' } }
             );
 
         foreach my $release (@releases) {
