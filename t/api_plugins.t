@@ -24,6 +24,16 @@ KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
         version          => '2.5.7',
         koha_min_version => '19.05',
         date_released    => '2024-07-01T15:34:06Z',
+        status           => 'published',
+    }
+);
+KohaPluginStore::Model::PluginVersion->new( pg => test_pg() )->create(
+    {
+        plugin_id        => $plugin->id,
+        version          => '2.6.0',
+        koha_min_version => '19.05',
+        date_released    => '2024-08-01T15:34:06Z',
+        status           => 'changes_requested',
     }
 );
 
@@ -33,12 +43,18 @@ subtest 'requires koha_version_release' => sub {
     $t->get_ok('/api/plugins')->status_is(400);
 };
 
-subtest 'lists the seeded plugin and its compatible release' => sub {
+subtest 'lists the seeded plugin and its compatible published release' => sub {
     $t->get_ok('/api/plugins?koha_version_release=20.00')
       ->status_is(200)
       ->json_is( '/0/name' => 'CoverFlow' )
       ->json_is( '/0/releases/0/version' => '2.5.7' )
       ->header_is( 'Access-Control-Allow-Origin' => '*' );
+};
+
+subtest 'excludes a non-published release for the same plugin' => sub {
+    my $body = $t->get_ok('/api/plugins?koha_version_release=20.00')->tx->res->json;
+    my @versions = map { $_->{version} } @{ $body->[0]{releases} };
+    ok( !( grep { $_ eq '2.6.0' } @versions ), 'the changes_requested release is not exposed' );
 };
 
 done_testing();
