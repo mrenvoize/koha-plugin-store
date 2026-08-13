@@ -13,9 +13,23 @@ services:
     build: .
     depends_on:
       - postgres
+    environment:
+      # PerlSyntax's sandboxed compile check passes bind-mount sources to the
+      # HOST's Docker daemon (see the socket mount below), which resolves them
+      # against its own filesystem, not this container's -- so it needs to
+      # know the real host path this worktree lives at, to translate its own
+      # /app/... paths back before using them as -v sources. ${PWD} is
+      # expanded by `docker compose` itself, on the host, at parse time --
+      # assumes `docker compose` is always run from this worktree's root, as
+      # this project's tooling already does throughout.
+      - HOST_PROJECT_DIR=${PWD}
     volumes:
       - .:/app
       - koha_plugin_store_local:/app/local
+      # PerlSyntax's sandboxed compile check shells out to `docker run` --
+      # this is Docker-outside-of-Docker (the host's daemon, not one running
+      # inside this container), so no separate dockerd needs starting here.
+      - /var/run/docker.sock:/var/run/docker.sock
     command: ["perl", "script/koha_plugin_store", "minion", "worker"]
 
   postgres:
