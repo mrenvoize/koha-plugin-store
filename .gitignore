@@ -6,3 +6,4 @@ ssl/*
 node_modules/
 .vscode
 local/
+tmp/
