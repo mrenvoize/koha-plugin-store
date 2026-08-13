@@ -156,9 +156,17 @@ out to separate jobs, since the catalogue is small and only one check
   Koha tag matching the plugin's `minimum_version`. This means the app's own
   container (or host) needs Docker socket access and network egress to
   `git.koha-community.org` the first time each Koha version is needed;
-  subsequent checks reuse the cached checkout under
-  `/var/cache/koha-plugin-store/koha-checkouts` (overridable via
-  `$context->{koha_checkout_cache_dir}`).
+  subsequent checks reuse the cached checkout under `/app/tmp/koha-checkouts`
+  (overridable via `$context->{koha_checkout_cache_dir}`). In the Docker
+  Compose dev setup, `worker` reaches Docker by bind-mounting the *host's*
+  socket (`/var/run/docker.sock`) rather than running a nested `dockerd` --
+  which means bind-mount sources it passes to `docker run` (this cache dir,
+  and the plugin extraction tempdir in `ProcessPluginVersion`) must be paths
+  that resolve identically on the true host and inside `worker`, since the
+  host's daemon is what actually resolves them. `/app/...` works because
+  `docker-compose.yml` already bind-mounts the whole worktree there; the
+  container's own private `/tmp` would not work and would silently bind-mount
+  an empty directory instead of the real one.
 - `perl_critic` depends on `Koha::QA::PerlCritic`, which — unlike everything
   else in `cpanfile` — isn't on CPAN. See the `cpanfile` comment for the
   exact `cpanm -L local --force <git-url>@<ref>` install command; it must
